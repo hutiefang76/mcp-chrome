@@ -190,53 +190,10 @@ We welcome contributions! Please see [CONTRIBUTING.md](docs/CONTRIBUTING.md) for
 
 We have exciting plans for the future development of Chrome MCP Server:
 
-### 🔐 Authentication & Security
-- **User Authentication**: Implement secure user authentication system
-- **API Key Management**: Support for API key-based access control
-- **Permission System**: Granular permission control for different tools and operations
-- **Secure Storage**: Enhanced security for sensitive data storage
-
-### 📹 Recording & Playback
-- **Action Recording**: Record user interactions and browser operations
-- **Playback Engine**: Replay recorded actions with customizable parameters
-- **Script Generation**: Auto-generate automation scripts from recorded sessions
-- **Session Management**: Save, organize, and share recorded sessions
-
-### 🔄 Workflow Automation
-- **Visual Workflow Builder**: Drag-and-drop interface for creating complex workflows
-- **Conditional Logic**: Support for if/else conditions and loops in workflows
-- **Workflow Templates**: Pre-built templates for common automation tasks
-- **Scheduling**: Time-based and event-triggered workflow execution
-- **Workflow Sharing**: Import/export workflows between users
-
-### 🧪 Testing & Quality Assurance
-- **Unit Testing Framework**: Comprehensive testing suite for Chrome extension components
-- **Integration Testing**: End-to-end testing with real browser environments
-- **Performance Monitoring**: Built-in performance metrics and optimization tools
-- **Error Reporting**: Advanced error tracking and debugging capabilities
-
-### 🌐 Enhanced Browser Support
-- **Firefox Extension**: Extend support to Firefox browser
-- **Safari Extension**: Support for Safari browser (where technically feasible)
-- **Mobile Browser Support**: Explore mobile browser automation possibilities
-
-### 🤖 AI & Machine Learning
-- **Smart Element Detection**: AI-powered element recognition and interaction
-- **Predictive Actions**: Suggest next actions based on user behavior patterns
-- **Natural Language Processing**: Enhanced natural language command interpretation
-- **Computer Vision**: Advanced screenshot analysis and visual element detection
-
-### 🔧 Developer Experience
-- **Plugin System**: Extensible plugin architecture for custom tools
-- **CLI Tools**: Command-line interface for advanced users
-- **API Documentation**: Interactive API documentation and testing tools
-- **Development Kit**: SDK for building custom MCP tools and extensions
-
-### 📊 Analytics & Insights
-- **Usage Analytics**: Detailed insights into tool usage and performance
-- **Browser Behavior Analysis**: Understand and optimize browser interaction patterns
-- **Performance Metrics**: Real-time monitoring of extension performance
-- **User Experience Metrics**: Track and improve user satisfaction
+- [ ] Authentication
+- [ ] Recording and Playback
+- [ ] Workflow Automation
+- [ ] Enhanced Browser Support (Firefox Extension)
 
 ---
 

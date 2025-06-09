@@ -69,7 +69,7 @@ pnpm install -g mcp-chrome-bridge
    - 启用"开发者模式"
    - 点击"加载已解压的扩展程序"，选择 `your/dowloaded/extension/folder`
    - 点击插件图标打开插件，点击连接即可看到mcp的配置
-<img width="475" alt="截屏2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
+     <img width="475" alt="截屏2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
 
 ### 在 Claude Desktop 中使用
 
@@ -190,13 +190,13 @@ https://github.com/user-attachments/assets/ff160f48-58e0-4c76-a6b0-c4e1f91370c8
 
 我们对 Chrome MCP Server 的未来发展有着激动人心的计划：
 
-### 🔐 身份认证
+- [ ] 身份认证
 
-### 📹 录制与回放
+- [ ] 录制与回放
 
-### 🔄 工作流自动化
+- [ ] 工作流自动化
 
-### 🌐 增强浏览器支持（Firefox 扩展）
+- [ ] 增强浏览器支持（Firefox 扩展）
 
 ---
 
