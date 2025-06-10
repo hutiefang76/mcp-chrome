@@ -33,12 +33,25 @@ echo Current PWD: %CD% >> "%WRAPPER_LOG%"
 
 set "NODE_EXEC="
 
-REM 1. Check if node is in PATH using 'where'
-for /f "delims=" %%i in ('where node.exe 2^>nul') do (
-    if not defined NODE_EXEC set "NODE_EXEC=%%i"
+REM 1. (NEW) First try to find Node.js in the same NVM environment as this script
+REM Extract the NVM path from the current script directory
+for %%i in ("%SCRIPT_DIR%") do set "POTENTIAL_NVM_PATH=%%~dpi"
+set "POTENTIAL_NVM_PATH=%POTENTIAL_NVM_PATH:~0,-1%"
+REM Go up to find the NVM root (e.g., from v20.19.2\node_modules\... to v20.19.2)
+for %%i in ("%POTENTIAL_NVM_PATH%\..\..\..") do set "NVM_VERSION_PATH=%%~fi"
+if exist "%NVM_VERSION_PATH%\node.exe" (
+    set "NODE_EXEC=%NVM_VERSION_PATH%\node.exe"
+    echo Found NVM-specific node.exe at %NODE_EXEC% >> "%WRAPPER_LOG%"
 )
-if defined NODE_EXEC (
-    echo Found node using 'where node.exe': %NODE_EXEC% >> "%WRAPPER_LOG%"
+
+REM 2. If NVM-specific node not found, check if node is in PATH using 'where'
+if not defined NODE_EXEC (
+    for /f "delims=" %%i in ('where node.exe 2^>nul') do (
+        if not defined NODE_EXEC set "NODE_EXEC=%%i"
+    )
+    if defined NODE_EXEC (
+        echo Found node using 'where node.exe': %NODE_EXEC% >> "%WRAPPER_LOG%"
+    )
 )
 
 REM 2. If not found by 'where', check common locations
