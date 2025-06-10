@@ -62,7 +62,6 @@ class IndexedDBHelper {
         request.onupgradeneeded = (event) => {
           const db = (event.target as IDBOpenDBRequest).result;
 
-
           if (!db.objectStoreNames.contains(STORE_NAME)) {
             const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
             store.createIndex('indexFileName', 'indexFileName', { unique: false });
@@ -259,7 +258,6 @@ export class VectorDatabase {
 
       await this.syncFileSystem('read');
 
-
       const indexExists = hnswlib.EmscriptenFileSystemManager.checkFileExists(
         this.config.indexFileName,
       );
@@ -354,7 +352,7 @@ export class VectorDatabase {
     };
 
     try {
-      // 验证向量数据
+      // Validate vector data
       if (!embedding || embedding.length !== this.config.dimension) {
         const errorMsg = `Invalid embedding dimension: expected ${this.config.dimension}, got ${embedding?.length || 0}`;
         console.error('VectorDatabase: Dimension mismatch detected!', {
@@ -366,7 +364,7 @@ export class VectorDatabase {
           title: title.substring(0, 50) + '...',
         });
 
-        // 这可能是模型切换导致的维度不匹配，建议重新初始化
+        // This might be caused by model switching, suggest reinitialization
         console.warn(
           'VectorDatabase: This might be caused by model switching. Consider reinitializing the vector database with the correct dimension.',
         );
@@ -374,14 +372,14 @@ export class VectorDatabase {
         throw new Error(errorMsg);
       }
 
-      // 检查向量数据是否包含无效值
+      // Check if vector data contains invalid values
       for (let i = 0; i < embedding.length; i++) {
         if (!isFinite(embedding[i])) {
           throw new Error(`Invalid embedding value at index ${i}: ${embedding[i]}`);
         }
       }
 
-      // 确保我们有一个干净的 Float32Array
+      // Ensure we have a clean Float32Array
       let cleanEmbedding: Float32Array;
       if (embedding instanceof Float32Array) {
         cleanEmbedding = embedding;
@@ -389,15 +387,15 @@ export class VectorDatabase {
         cleanEmbedding = new Float32Array(embedding);
       }
 
-      // 使用当前的nextLabel作为label
+      // Use current nextLabel as label
       const label = this.nextLabel++;
 
       console.log(
         `VectorDatabase: Adding document with label ${label}, embedding dimension: ${embedding.length}`,
       );
 
-      // 添加向量到索引
-      // 根据 hnswlib-wasm-static 的 emscripten 绑定要求，需要创建 VectorFloat 类型
+      // Add vector to index
+      // According to hnswlib-wasm-static emscripten binding requirements, need to create VectorFloat type
       console.log(`VectorDatabase: 🔧 DEBUGGING - About to call addPoint with:`, {
         embeddingType: typeof cleanEmbedding,
         isFloat32Array: cleanEmbedding instanceof Float32Array,
@@ -407,27 +405,27 @@ export class VectorDatabase {
         replaceDeleted: false,
       });
 
-      // 方法1: 尝试使用 VectorFloat 构造函数（如果可用）
+      // Method 1: Try using VectorFloat constructor (if available)
       let vectorToAdd;
       try {
-        // 检查是否有 VectorFloat 构造函数
+        // Check if VectorFloat constructor exists
         if (globalHnswlib && globalHnswlib.VectorFloat) {
           console.log('VectorDatabase: Using VectorFloat constructor');
           vectorToAdd = new globalHnswlib.VectorFloat();
-          // 逐个添加元素到 VectorFloat
+          // Add elements to VectorFloat one by one
           for (let i = 0; i < cleanEmbedding.length; i++) {
             vectorToAdd.push_back(cleanEmbedding[i]);
           }
         } else {
-          // 方法2: 使用普通 JS 数组（回退方案）
+          // Method 2: Use plain JS array (fallback)
           console.log('VectorDatabase: Using plain JS array as fallback');
           vectorToAdd = Array.from(cleanEmbedding);
         }
 
-        // 使用构造的向量调用 addPoint
+        // Call addPoint with constructed vector
         this.index.addPoint(vectorToAdd, label, false);
 
-        // 清理 VectorFloat 对象（如果是手动创建的）
+        // Clean up VectorFloat object (if manually created)
         if (vectorToAdd && typeof vectorToAdd.delete === 'function') {
           vectorToAdd.delete();
         }
@@ -437,34 +435,34 @@ export class VectorDatabase {
           vectorError,
         );
 
-        // 方法3: 尝试直接传递 Float32Array
+        // Method 3: Try passing Float32Array directly
         try {
           console.log('VectorDatabase: Trying Float32Array directly');
           this.index.addPoint(cleanEmbedding, label, false);
         } catch (float32Error) {
           console.error('VectorDatabase: Float32Array approach failed:', float32Error);
 
-          // 方法4: 最后的回退 - 使用扩展运算符
+          // Method 4: Last resort - use spread operator
           console.log('VectorDatabase: Trying spread operator as last resort');
           this.index.addPoint([...cleanEmbedding], label, false);
         }
       }
       console.log(`VectorDatabase: ✅ Successfully added document with label ${label}`);
 
-      // 存储文档映射
+      // Store document mapping
       this.documents.set(label, document);
 
-      // 更新标签页文档映射
+      // Update tab document mapping
       if (!this.tabDocuments.has(tabId)) {
         this.tabDocuments.set(tabId, new Set());
       }
       this.tabDocuments.get(tabId)!.add(label);
 
-      // 保存索引和映射
+      // Save index and mappings
       await this.saveIndex();
       await this.saveDocumentMappings();
 
-      // 检查是否需要自动清理
+      // Check if auto cleanup is needed
       if (this.config.enableAutoCleanup) {
         await this.checkAndPerformAutoCleanup();
       }
@@ -493,14 +491,14 @@ export class VectorDatabase {
     }
 
     try {
-      // 验证查询向量
+      // Validate query vector
       if (!queryEmbedding || queryEmbedding.length !== this.config.dimension) {
         throw new Error(
           `Invalid query embedding dimension: expected ${this.config.dimension}, got ${queryEmbedding?.length || 0}`,
         );
       }
 
-      // 检查查询向量是否包含无效值
+      // Check if query vector contains invalid values
       for (let i = 0; i < queryEmbedding.length; i++) {
         if (!isFinite(queryEmbedding[i])) {
           throw new Error(`Invalid query embedding value at index ${i}: ${queryEmbedding[i]}`);
@@ -511,7 +509,7 @@ export class VectorDatabase {
         `VectorDatabase: Searching with query embedding dimension: ${queryEmbedding.length}, topK: ${topK}`,
       );
 
-      // 检查索引是否为空
+      // Check if index is empty
       const currentCount = this.index.getCurrentCount();
       if (currentCount === 0) {
         console.log('VectorDatabase: Index is empty, returning no results');
@@ -520,7 +518,7 @@ export class VectorDatabase {
 
       console.log(`VectorDatabase: Index contains ${currentCount} vectors`);
 
-      // 检查文档映射与索引是否同步
+      // Check if document mapping and index are synchronized
       const mappingCount = this.documents.size;
       if (mappingCount === 0 && currentCount > 0) {
         console.warn(
@@ -539,27 +537,27 @@ export class VectorDatabase {
         );
       }
 
-      // 根据 hnswlib-wasm-static 的 emscripten 绑定要求，处理查询向量
+      // Process query vector according to hnswlib-wasm-static emscripten binding requirements
       let queryVector;
       let searchResult;
 
       try {
-        // 方法1: 尝试使用 VectorFloat 构造函数（如果可用）
+        // Method 1: Try using VectorFloat constructor (if available)
         if (globalHnswlib && globalHnswlib.VectorFloat) {
           console.log('VectorDatabase: Using VectorFloat for search query');
           queryVector = new globalHnswlib.VectorFloat();
-          // 逐个添加元素到 VectorFloat
+          // Add elements to VectorFloat one by one
           for (let i = 0; i < queryEmbedding.length; i++) {
             queryVector.push_back(queryEmbedding[i]);
           }
           searchResult = this.index.searchKnn(queryVector, topK, undefined);
 
-          // 清理 VectorFloat 对象
+          // Clean up VectorFloat object
           if (queryVector && typeof queryVector.delete === 'function') {
             queryVector.delete();
           }
         } else {
-          // 方法2: 使用普通 JS 数组（回退方案）
+          // Method 2: Use plain JS array (fallback)
           console.log('VectorDatabase: Using plain JS array for search query');
           const queryArray = Array.from(queryEmbedding);
           searchResult = this.index.searchKnn(queryArray, topK, undefined);
@@ -570,14 +568,14 @@ export class VectorDatabase {
           vectorError,
         );
 
-        // 方法3: 尝试直接传递 Float32Array
+        // Method 3: Try passing Float32Array directly
         try {
           console.log('VectorDatabase: Trying Float32Array directly for search');
           searchResult = this.index.searchKnn(queryEmbedding, topK, undefined);
         } catch (float32Error) {
           console.error('VectorDatabase: Float32Array search failed:', float32Error);
 
-          // 方法4: 最后的回退 - 使用扩展运算符
+          // Method 4: Last resort - use spread operator
           console.log('VectorDatabase: Trying spread operator for search as last resort');
           searchResult = this.index.searchKnn([...queryEmbedding], topK, undefined);
         }
@@ -592,13 +590,13 @@ export class VectorDatabase {
       for (let i = 0; i < searchResult.neighbors.length; i++) {
         const label = searchResult.neighbors[i];
         const distance = searchResult.distances[i];
-        const similarity = 1 - distance; // 余弦距离转换为相似度
+        const similarity = 1 - distance; // Convert cosine distance to similarity
 
         console.log(
           `VectorDatabase: Processing neighbor ${i}: label=${label}, distance=${distance}, similarity=${similarity}`,
         );
 
-        // 根据标签找到对应的文档
+        // Find corresponding document by label
         const document = this.findDocumentByLabel(label);
         if (document) {
           console.log(`VectorDatabase: Found document for label ${label}: ${document.id}`);
@@ -610,9 +608,9 @@ export class VectorDatabase {
         } else {
           console.warn(`VectorDatabase: No document found for label ${label}`);
 
-          // 详细调试信息
+          // Detailed debug information
           if (i < 5) {
-            // 只为前5个邻居显示详细信息，避免日志过多
+            // Only show detailed info for first 5 neighbors to avoid log spam
             console.warn(
               `VectorDatabase: Available labels (first 20): ${Array.from(this.documents.keys()).slice(0, 20).join(', ')}`,
             );
@@ -633,7 +631,7 @@ export class VectorDatabase {
         `VectorDatabase: Found ${results.length} search results out of ${searchResult.neighbors.length} neighbors`,
       );
 
-      // 如果没有找到任何结果，但索引中有数据，说明标签不匹配
+      // If no results found but index has data, indicates label mismatch
       if (results.length === 0 && searchResult.neighbors.length > 0) {
         console.error(
           'VectorDatabase: Label mismatch detected! Index has vectors but no matching documents found.',
@@ -643,7 +641,7 @@ export class VectorDatabase {
         );
         console.error('VectorDatabase: Consider rebuilding the index to fix this issue.');
 
-        // 提供一些诊断信息
+        // Provide some diagnostic information
         const sampleLabels = searchResult.neighbors.slice(0, 5);
         const availableLabels = Array.from(this.documents.keys()).slice(0, 5);
         console.error('VectorDatabase: Sample search labels:', sampleLabels);
@@ -678,15 +676,15 @@ export class VectorDatabase {
     }
 
     try {
-      // 从映射中删除文档（hnswlib-wasm不支持直接删除，只能标记删除）
+      // Remove documents from mapping (hnswlib-wasm doesn't support direct deletion, only mark as deleted)
       for (const label of documentLabels) {
         this.documents.delete(label);
       }
 
-      // 清理标签页映射
+      // Clean up tab mapping
       this.tabDocuments.delete(tabId);
 
-      // 保存更改
+      // Save changes
       await this.saveDocumentMappings();
 
       console.log(`VectorDatabase: Removed ${documentLabels.size} documents for tab ${tabId}`);
@@ -745,12 +743,12 @@ export class VectorDatabase {
   }
 
   /**
-   * 计算文档映射的大小
+   * Calculate document mappings size
    */
   private calculateDocumentMappingsSize(): number {
     let size = 0;
 
-    // 计算documents Map的大小
+    // Calculate documents Map size
     for (const [label, document] of this.documents.entries()) {
       // label (number): 8 bytes
       size += 8;
@@ -759,7 +757,7 @@ export class VectorDatabase {
       size += this.calculateObjectSize(document);
     }
 
-    // 计算tabDocuments Map的大小
+    // Calculate tabDocuments Map size
     for (const [tabId, labels] of this.tabDocuments.entries()) {
       // tabId (number): 8 bytes
       size += 8;
@@ -772,50 +770,50 @@ export class VectorDatabase {
   }
 
   /**
-   * 计算向量数据的大小
+   * Calculate vectors data size
    */
   private calculateVectorsSize(): number {
     const documentCount = this.documents.size;
     const dimension = this.config.dimension;
 
-    // 每个向量: dimension * 4 bytes (Float32)
+    // Each vector: dimension * 4 bytes (Float32)
     const vectorSize = dimension * 4;
 
     return documentCount * vectorSize;
   }
 
   /**
-   * 估算索引结构的大小
+   * Estimate index structure size
    */
   private calculateIndexStructureSize(): number {
     const documentCount = this.documents.size;
 
     if (documentCount === 0) return 0;
 
-    // HNSW索引的大小估算
-    // 基于论文和实际测试，HNSW索引大小约为向量数据的20-40%
+    // HNSW index size estimation
+    // Based on papers and actual testing, HNSW index size is about 20-40% of vector data
     const vectorsSize = this.calculateVectorsSize();
-    const indexOverhead = Math.floor(vectorsSize * 0.3); // 30%的开销
+    const indexOverhead = Math.floor(vectorsSize * 0.3); // 30% overhead
 
-    // 额外的图结构开销
-    const graphOverhead = documentCount * 64; // 每个节点约64字节的图结构开销
+    // Additional graph structure overhead
+    const graphOverhead = documentCount * 64; // About 64 bytes graph structure overhead per node
 
     return indexOverhead + graphOverhead;
   }
 
   /**
-   * 计算对象的大小（粗略估算）
+   * Calculate object size (rough estimation)
    */
   private calculateObjectSize(obj: any): number {
     let size = 0;
 
     try {
       const jsonString = JSON.stringify(obj);
-      // UTF-8编码，大部分字符1字节，中文等3字节，平均按2字节计算
+      // UTF-8 encoding, most characters 1 byte, Chinese etc 3 bytes, average 2 bytes
       size = jsonString.length * 2;
     } catch (error) {
-      // 如果JSON序列化失败，使用默认估算
-      size = 512; // 默认512字节
+      // If JSON serialization fails, use default estimation
+      size = 512; // Default 512 bytes
     }
 
     return size;
@@ -828,17 +826,17 @@ export class VectorDatabase {
     console.log('VectorDatabase: Starting complete database clear...');
 
     try {
-      // 清理内存中的数据结构
+      // Clear in-memory data structures
       this.documents.clear();
       this.tabDocuments.clear();
       this.nextLabel = 0;
 
-      // 清理HNSW索引文件（在hnswlib-index数据库中）
+      // Clear HNSW index file (in hnswlib-index database)
       if (this.isInitialized && this.index) {
         try {
           console.log('VectorDatabase: Clearing HNSW index file from IndexedDB...');
 
-          // 1. 首先尝试物理删除索引文件（使用EmscriptenFileSystemManager）
+          // 1. First try to physically delete index file (using EmscriptenFileSystemManager)
           try {
             if (
               globalHnswlib &&
@@ -848,7 +846,7 @@ export class VectorDatabase {
                 `VectorDatabase: Deleting physical index file: ${this.config.indexFileName}`,
               );
               globalHnswlib.EmscriptenFileSystemManager.deleteFile(this.config.indexFileName);
-              await this.syncFileSystem('write'); // 确保删除操作同步到持久化存储
+              await this.syncFileSystem('write'); // Ensure deletion is synced to persistent storage
               console.log(
                 `VectorDatabase: Physical index file ${this.config.indexFileName} deleted successfully`,
               );
@@ -862,14 +860,14 @@ export class VectorDatabase {
               `VectorDatabase: Failed to delete physical index file ${this.config.indexFileName}:`,
               fileError,
             );
-            // 继续执行其他清理操作，不阻塞流程
+            // Continue with other cleanup operations, don't block the process
           }
 
-          // 2. 删除IndexedDB中的索引文件
+          // 2. Delete index file from IndexedDB
           await this.index.deleteIndex(this.config.indexFileName);
           console.log('VectorDatabase: HNSW index file cleared from IndexedDB');
 
-          // 3. 重新初始化空索引
+          // 3. Reinitialize empty index
           console.log('VectorDatabase: Reinitializing empty HNSW index...');
           this.index.initIndex(
             this.config.maxElements,
@@ -879,15 +877,15 @@ export class VectorDatabase {
           );
           this.index.setEfSearch(this.config.efSearch);
 
-          // 4. 强制保存空索引
+          // 4. Force save empty index
           await this.forceSaveIndex();
         } catch (indexError) {
           console.warn('VectorDatabase: Failed to clear HNSW index file:', indexError);
-          // 继续执行其他清理操作
+          // Continue with other cleanup operations
         }
       }
 
-      // 清理IndexedDB中的文档映射（在VectorDatabaseStorage数据库中）
+      // Clear document mappings from IndexedDB (in VectorDatabaseStorage database)
       try {
         console.log('VectorDatabase: Clearing document mappings from IndexedDB...');
         await IndexedDBHelper.deleteData(this.config.indexFileName);
@@ -898,7 +896,7 @@ export class VectorDatabase {
           idbError,
         );
 
-        // 清理chrome.storage中的备份数据
+        // Clear backup data from chrome.storage
         try {
           const storageKey = `hnswlib_document_mappings_${this.config.indexFileName}`;
           await chrome.storage.local.remove([storageKey]);
@@ -908,7 +906,7 @@ export class VectorDatabase {
         }
       }
 
-      // 保存空的文档映射以确保一致性
+      // Save empty document mappings to ensure consistency
       await this.saveDocumentMappings();
 
       console.log('VectorDatabase: Complete database clear finished successfully');
@@ -919,19 +917,19 @@ export class VectorDatabase {
   }
 
   /**
-   * 强制保存索引并同步文件系统
+   * Force save index and sync filesystem
    */
   private async forceSaveIndex(): Promise<void> {
     try {
       await this.index.writeIndex(this.config.indexFileName);
-      await this.syncFileSystem('write'); // 强制同步
+      await this.syncFileSystem('write'); // Force sync
     } catch (error) {
       console.error('VectorDatabase: Failed to force save index:', error);
     }
   }
 
   /**
-   * 检查并执行自动清理
+   * Check and perform auto cleanup
    */
   private async checkAndPerformAutoCleanup(): Promise<void> {
     try {
@@ -942,13 +940,13 @@ export class VectorDatabase {
         `VectorDatabase: Auto cleanup check - current: ${currentCount}, max: ${maxElements}`,
       );
 
-      // 检查是否超过最大元素数量
+      // Check if maximum element count is exceeded
       if (currentCount >= maxElements) {
         console.log('VectorDatabase: Document count reached limit, performing cleanup...');
-        await this.performLRUCleanup(Math.floor(maxElements * 0.2)); // 清理20%的数据
+        await this.performLRUCleanup(Math.floor(maxElements * 0.2)); // Clean up 20% of data
       }
 
-      // 检查是否有过期数据
+      // Check if there's expired data
       if (this.config.maxRetentionDays && this.config.maxRetentionDays > 0) {
         await this.performTimeBasedCleanup();
       }
@@ -958,7 +956,7 @@ export class VectorDatabase {
   }
 
   /**
-   * 执行基于LRU的清理（删除最旧的文档）
+   * Perform LRU-based cleanup (delete oldest documents)
    */
   private async performLRUCleanup(cleanupCount: number): Promise<void> {
     try {
@@ -966,18 +964,18 @@ export class VectorDatabase {
         `VectorDatabase: Starting LRU cleanup, removing ${cleanupCount} oldest documents`,
       );
 
-      // 获取所有文档并按时间戳排序
+      // Get all documents and sort by timestamp
       const allDocuments = Array.from(this.documents.entries());
       allDocuments.sort((a, b) => a[1].timestamp - b[1].timestamp);
 
-      // 选择要删除的文档
+      // Select documents to delete
       const documentsToDelete = allDocuments.slice(0, cleanupCount);
 
       for (const [label, _document] of documentsToDelete) {
         await this.removeDocumentByLabel(label);
       }
 
-      // 保存更新后的索引和映射
+      // Save updated index and mappings
       await this.saveIndex();
       await this.saveDocumentMappings();
 
@@ -990,7 +988,7 @@ export class VectorDatabase {
   }
 
   /**
-   * 执行基于时间的清理（删除过期文档）
+   * Perform time-based cleanup (delete expired documents)
    */
   private async performTimeBasedCleanup(): Promise<void> {
     try {
@@ -1013,7 +1011,7 @@ export class VectorDatabase {
         await this.removeDocumentByLabel(label);
       }
 
-      // 保存更新后的索引和映射
+      // Save updated index and mappings
       if (documentsToDelete.length > 0) {
         await this.saveIndex();
         await this.saveDocumentMappings();
@@ -1028,7 +1026,7 @@ export class VectorDatabase {
   }
 
   /**
-   * 根据标签删除单个文档
+   * Remove single document by label
    */
   private async removeDocumentByLabel(label: number): Promise<void> {
     try {
@@ -1038,7 +1036,7 @@ export class VectorDatabase {
         return;
       }
 
-      // 从HNSW索引中删除向量
+      // Remove vector from HNSW index
       if (this.index) {
         try {
           this.index.markDelete(label);
@@ -1050,14 +1048,14 @@ export class VectorDatabase {
         }
       }
 
-      // 从内存映射中删除
+      // Remove from memory mapping
       this.documents.delete(label);
 
-      // 从标签页映射中删除
+      // Remove from tab mapping
       const tabId = document.tabId;
       if (this.tabDocuments.has(tabId)) {
         this.tabDocuments.get(tabId)!.delete(label);
-        // 如果标签页没有其他文档，删除整个标签页映射
+        // If tab has no other documents, delete entire tab mapping
         if (this.tabDocuments.get(tabId)!.size === 0) {
           this.tabDocuments.delete(tabId);
         }
@@ -1085,24 +1083,24 @@ export class VectorDatabase {
         return;
       }
 
-      // 如果已经有同步操作在进行中，等待它完成
+      // If sync operation is already in progress, wait for it to complete
       if (syncInProgress && pendingSyncPromise) {
         console.log(`VectorDatabase: Sync already in progress, waiting...`);
         await pendingSyncPromise;
         return;
       }
 
-      // 标记同步开始
+      // Mark sync start
       syncInProgress = true;
 
-      // 创建同步 Promise，添加超时机制
+      // Create sync Promise with timeout mechanism
       pendingSyncPromise = new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           console.warn(`VectorDatabase: Filesystem sync (${direction}) timeout`);
           syncInProgress = false;
           pendingSyncPromise = null;
           reject(new Error('Sync timeout'));
-        }, 5000); // 5秒超时
+        }, 5000); // 5 second timeout
 
         try {
           globalHnswlib.EmscriptenFileSystemManager.syncFS(direction === 'read', () => {
@@ -1132,9 +1130,9 @@ export class VectorDatabase {
   private async saveIndex(): Promise<void> {
     try {
       await this.index.writeIndex(this.config.indexFileName);
-      // 减少同步频率，只在必要时同步
+      // Reduce sync frequency, only sync when necessary
       if (this.documents.size % 10 === 0) {
-        // 每10个文档同步一次
+        // Sync every 10 documents
         await this.syncFileSystem('write');
       }
     } catch (error) {
@@ -1144,7 +1142,7 @@ export class VectorDatabase {
 
   private async saveDocumentMappings(): Promise<void> {
     try {
-      // 将文档映射保存到 IndexedDB 中
+      // Save document mappings to IndexedDB
       const mappingData = {
         documents: Array.from(this.documents.entries()),
         tabDocuments: Array.from(this.tabDocuments.entries()).map(([tabId, labels]) => [
@@ -1155,7 +1153,7 @@ export class VectorDatabase {
       };
 
       try {
-        // 使用 IndexedDB 保存数据，支持更大的存储容量
+        // Use IndexedDB to save data, supports larger storage capacity
         await IndexedDBHelper.saveData(this.config.indexFileName, mappingData);
         console.log('VectorDatabase: Document mappings saved to IndexedDB');
       } catch (idbError) {
@@ -1164,7 +1162,7 @@ export class VectorDatabase {
           idbError,
         );
 
-        // 回退到 chrome.storage.local
+        // Fall back to chrome.storage.local
         try {
           const storageKey = `hnswlib_document_mappings_${this.config.indexFileName}`;
           await chrome.storage.local.set({ [storageKey]: mappingData });
@@ -1183,7 +1181,7 @@ export class VectorDatabase {
 
   public async loadDocumentMappings(): Promise<void> {
     try {
-      // 从 IndexedDB 加载文档映射
+      // Load document mappings from IndexedDB
       if (!globalHnswlib) {
         return;
       }
@@ -1191,7 +1189,7 @@ export class VectorDatabase {
       let mappingData = null;
 
       try {
-        // 首先尝试从 IndexedDB 读取
+        // First try to read from IndexedDB
         mappingData = await IndexedDBHelper.loadData(this.config.indexFileName);
         if (mappingData) {
           console.log(`VectorDatabase: Loaded document mappings from IndexedDB`);
@@ -1203,7 +1201,7 @@ export class VectorDatabase {
         );
       }
 
-      // 如果 IndexedDB 没有数据，尝试从 chrome.storage.local 读取（向后兼容）
+      // If IndexedDB has no data, try reading from chrome.storage.local (backward compatibility)
       if (!mappingData) {
         try {
           const storageKey = `hnswlib_document_mappings_${this.config.indexFileName}`;
@@ -1214,7 +1212,7 @@ export class VectorDatabase {
               `VectorDatabase: Loaded document mappings from chrome.storage.local (fallback)`,
             );
 
-            // 迁移到 IndexedDB
+            // Migrate to IndexedDB
             try {
               await IndexedDBHelper.saveData(this.config.indexFileName, mappingData);
               console.log('VectorDatabase: Migrated data from chrome.storage to IndexedDB');
@@ -1228,23 +1226,23 @@ export class VectorDatabase {
       }
 
       if (mappingData) {
-        // 恢复文档映射
+        // Restore document mappings
         this.documents.clear();
         for (const [label, doc] of mappingData.documents) {
           this.documents.set(label, doc);
         }
 
-        // 恢复标签页映射
+        // Restore tab mappings
         this.tabDocuments.clear();
         for (const [tabId, labels] of mappingData.tabDocuments) {
           this.tabDocuments.set(tabId, new Set(labels));
         }
 
-        // 恢复nextLabel - 使用保存的值或计算最大标签+1
+        // Restore nextLabel - use saved value or calculate max label + 1
         if (mappingData.nextLabel !== undefined) {
           this.nextLabel = mappingData.nextLabel;
         } else if (this.documents.size > 0) {
-          // 如果没有保存的nextLabel，计算最大标签+1
+          // If no saved nextLabel, calculate max label + 1
           const maxLabel = Math.max(...Array.from(this.documents.keys()));
           this.nextLabel = maxLabel + 1;
         } else {
@@ -1263,26 +1261,26 @@ export class VectorDatabase {
   }
 }
 
-// 全局 VectorDatabase 单例
+// Global VectorDatabase singleton
 let globalVectorDatabase: VectorDatabase | null = null;
 let currentDimension: number | null = null;
 
 /**
- * 获取全局 VectorDatabase 单例实例
- * 如果维度发生变化，会重新创建实例以确保兼容性
+ * Get global VectorDatabase singleton instance
+ * If dimension changes, will recreate instance to ensure compatibility
  */
 export async function getGlobalVectorDatabase(
   config?: Partial<VectorDatabaseConfig>,
 ): Promise<VectorDatabase> {
   const newDimension = config?.dimension || 384;
 
-  // 如果维度发生变化，需要重新创建向量数据库
+  // If dimension changes, need to recreate vector database
   if (globalVectorDatabase && currentDimension !== null && currentDimension !== newDimension) {
     console.log(
       `VectorDatabase: Dimension changed from ${currentDimension} to ${newDimension}, recreating instance`,
     );
 
-    // 清理旧实例 - 这会清理索引文件和文档映射
+    // Clean up old instance - this will clean up index files and document mappings
     try {
       await globalVectorDatabase.clear();
       console.log('VectorDatabase: Successfully cleared old instance for dimension change');
@@ -1306,15 +1304,15 @@ export async function getGlobalVectorDatabase(
 }
 
 /**
- * 同步版本的获取全局 VectorDatabase 实例（用于向后兼容）
- * 注意：如果需要维度变更，建议使用异步版本
+ * Synchronous version of getting global VectorDatabase instance (for backward compatibility)
+ * Note: If dimension change is needed, recommend using async version
  */
 export function getGlobalVectorDatabaseSync(
   config?: Partial<VectorDatabaseConfig>,
 ): VectorDatabase {
   const newDimension = config?.dimension || 384;
 
-  // 如果维度发生变化，记录警告但不清理（避免竞态条件）
+  // If dimension changes, log warning but don't clean up (avoid race conditions)
   if (globalVectorDatabase && currentDimension !== null && currentDimension !== newDimension) {
     console.warn(
       `VectorDatabase: Dimension mismatch detected (${currentDimension} vs ${newDimension}). Consider using async version for proper cleanup.`,
@@ -1333,7 +1331,7 @@ export function getGlobalVectorDatabaseSync(
 }
 
 /**
- * 重置全局 VectorDatabase 实例（主要用于测试或模型切换）
+ * Reset global VectorDatabase instance (mainly for testing or model switching)
  */
 export async function resetGlobalVectorDatabase(): Promise<void> {
   console.log('VectorDatabase: Starting global instance reset...');
@@ -1348,25 +1346,25 @@ export async function resetGlobalVectorDatabase(): Promise<void> {
     }
   }
 
-  // 额外清理：确保所有可能的IndexedDB数据都被清除
+  // Additional cleanup: ensure all possible IndexedDB data is cleared
   try {
     console.log('VectorDatabase: Performing comprehensive IndexedDB cleanup...');
 
-    // 清理VectorDatabaseStorage数据库中的所有数据
+    // Clear all data in VectorDatabaseStorage database
     await IndexedDBHelper.clearAllData();
 
-    // 清理hnswlib-index数据库中的索引文件
+    // Clear index files from hnswlib-index database
     try {
       console.log('VectorDatabase: Clearing HNSW index files from IndexedDB...');
 
-      // 尝试清理可能存在的索引文件
+      // Try to clean up possible existing index files
       const possibleIndexFiles = ['tab_content_index.dat', 'content_index.dat', 'vector_index.dat'];
 
-      // 如果有全局的hnswlib实例，尝试删除已知的索引文件
+      // If global hnswlib instance exists, try to delete known index files
       if (typeof globalHnswlib !== 'undefined' && globalHnswlib) {
         for (const fileName of possibleIndexFiles) {
           try {
-            // 1. 首先尝试物理删除索引文件（使用EmscriptenFileSystemManager）
+            // 1. First try to physically delete index file (using EmscriptenFileSystemManager)
             try {
               if (globalHnswlib.EmscriptenFileSystemManager.checkFileExists(fileName)) {
                 console.log(`VectorDatabase: Deleting physical index file: ${fileName}`);
@@ -1380,22 +1378,22 @@ export async function resetGlobalVectorDatabase(): Promise<void> {
               );
             }
 
-            // 2. 删除IndexedDB中的索引文件
+            // 2. Delete index file from IndexedDB
             const tempIndex = new globalHnswlib.HierarchicalNSW('cosine', 384);
             await tempIndex.deleteIndex(fileName);
             console.log(`VectorDatabase: Deleted IndexedDB index file: ${fileName}`);
           } catch (deleteError) {
-            // 文件可能不存在，这是正常的
+            // File might not exist, this is normal
             console.log(`VectorDatabase: Index file ${fileName} not found or already deleted`);
           }
         }
 
-        // 3. 强制同步文件系统以确保删除操作生效
+        // 3. Force sync filesystem to ensure deletion takes effect
         try {
           await new Promise<void>((resolve) => {
             const timeout = setTimeout(() => {
               console.warn('VectorDatabase: Filesystem sync timeout during cleanup');
-              resolve(); // 不阻塞流程
+              resolve(); // Don't block the process
             }, 3000);
 
             globalHnswlib.EmscriptenFileSystemManager.syncFS(false, () => {
@@ -1412,13 +1410,13 @@ export async function resetGlobalVectorDatabase(): Promise<void> {
       console.warn('VectorDatabase: Failed to clear HNSW index files:', hnswError);
     }
 
-    // 清理可能的chrome.storage备份数据（只清理向量数据库相关的数据，保留用户偏好）
+    // Clear possible chrome.storage backup data (only clear vector database related data, preserve user preferences)
     const possibleKeys = [
       'hnswlib_document_mappings_tab_content_index.dat',
       'hnswlib_document_mappings_content_index.dat',
       'hnswlib_document_mappings_vector_index.dat',
-      // 注意：不清理 selectedModel 和 selectedVersion，这些是用户偏好设置
-      // 注意：不清理 modelState，这个包含模型状态信息，应该由模型管理逻辑处理
+      // Note: Don't clear selectedModel and selectedVersion, these are user preference settings
+      // Note: Don't clear modelState, this contains model state info and should be handled by model management logic
     ];
 
     if (possibleKeys.length > 0) {
@@ -1441,14 +1439,14 @@ export async function resetGlobalVectorDatabase(): Promise<void> {
 }
 
 /**
- * 专门用于模型切换时的数据清理
- * 清理所有IndexedDB数据，包括HNSW索引文件和文档映射
+ * Specifically for data cleanup during model switching
+ * Clear all IndexedDB data, including HNSW index files and document mappings
  */
 export async function clearAllVectorData(): Promise<void> {
   console.log('VectorDatabase: Starting comprehensive vector data cleanup for model switch...');
 
   try {
-    // 1. 清理全局实例
+    // 1. Clear global instance
     if (globalVectorDatabase) {
       try {
         await globalVectorDatabase.clear();
@@ -1457,7 +1455,7 @@ export async function clearAllVectorData(): Promise<void> {
       }
     }
 
-    // 2. 清理VectorDatabaseStorage数据库
+    // 2. Clear VectorDatabaseStorage database
     try {
       console.log('VectorDatabase: Clearing VectorDatabaseStorage database...');
       await IndexedDBHelper.clearAllData();
@@ -1465,11 +1463,11 @@ export async function clearAllVectorData(): Promise<void> {
       console.warn('VectorDatabase: Failed to clear VectorDatabaseStorage:', error);
     }
 
-    // 3. 清理hnswlib-index数据库和物理文件
+    // 3. Clear hnswlib-index database and physical files
     try {
       console.log('VectorDatabase: Clearing hnswlib-index database and physical files...');
 
-      // 3.1 首先尝试物理删除索引文件（使用EmscriptenFileSystemManager）
+      // 3.1 First try to physically delete index files (using EmscriptenFileSystemManager)
       if (typeof globalHnswlib !== 'undefined' && globalHnswlib) {
         const possibleIndexFiles = [
           'tab_content_index.dat',
@@ -1492,7 +1490,7 @@ export async function clearAllVectorData(): Promise<void> {
           }
         }
 
-        // 强制同步文件系统
+        // Force sync filesystem
         try {
           await new Promise<void>((resolve) => {
             const timeout = setTimeout(() => {
@@ -1514,7 +1512,7 @@ export async function clearAllVectorData(): Promise<void> {
         }
       }
 
-      // 3.2 删除整个hnswlib-index数据库
+      // 3.2 Delete entire hnswlib-index database
       await new Promise<void>((resolve) => {
         const deleteRequest = indexedDB.deleteDatabase('/hnswlib-index');
         deleteRequest.onsuccess = () => {
@@ -1526,11 +1524,11 @@ export async function clearAllVectorData(): Promise<void> {
             'VectorDatabase: Failed to delete /hnswlib-index database:',
             deleteRequest.error,
           );
-          resolve(); // 不阻塞流程
+          resolve(); // Don't block the process
         };
         deleteRequest.onblocked = () => {
           console.warn('VectorDatabase: Deletion of /hnswlib-index database was blocked');
-          resolve(); // 不阻塞流程
+          resolve(); // Don't block the process
         };
       });
     } catch (error) {
@@ -1540,7 +1538,7 @@ export async function clearAllVectorData(): Promise<void> {
       );
     }
 
-    // 4. 清理chrome.storage中的备份数据
+    // 4. Clear backup data from chrome.storage
     try {
       const storageKeys = [
         'hnswlib_document_mappings_tab_content_index.dat',
@@ -1553,7 +1551,7 @@ export async function clearAllVectorData(): Promise<void> {
       console.warn('VectorDatabase: Failed to clear chrome.storage backup:', error);
     }
 
-    // 5. 重置全局状态
+    // 5. Reset global state
     globalVectorDatabase = null;
     currentDimension = null;
 

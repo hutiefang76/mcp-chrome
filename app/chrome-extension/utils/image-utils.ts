@@ -32,7 +32,6 @@ export async function stitchImages(
     throw new Error('Unable to get canvas context');
   }
 
-
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -101,7 +100,6 @@ export async function cropAndResizeImage(
   if (sWidth <= 0 || sHeight <= 0) {
     throw new Error('Invalid calculated crop size (<=0). Element may not be visible or fully captured.');
   }
-
 
   const finalCanvasWidthPx = targetWidthOpt ? targetWidthOpt * dpr : sWidth;
   const finalCanvasHeightPx = targetHeightOpt ? targetHeightOpt * dpr : sHeight;

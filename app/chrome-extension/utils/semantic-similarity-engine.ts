@@ -112,12 +112,12 @@ export function getModelSizeInfo(
   return {
     size: model.size,
     recommended: 'quantized',
-    description: `${model.description} (大小: ${model.size})`,
+    description: `${model.description} (Size: ${model.size})`,
   };
 }
 
 /**
- * 比较多个模型的性能和大小
+ * Compare performance and size of multiple models
  */
 export function compareModels(presets: ModelPreset[]) {
   return presets.map((preset) => {
@@ -139,29 +139,29 @@ export function compareModels(presets: ModelPreset[]) {
 }
 
 /**
- * 获取模型推荐使用场景
+ * Get recommended use cases for model
  */
 function getRecommendationContext(preset: ModelPreset): string[] {
   const contexts: string[] = [];
   const model = PREDEFINED_MODELS[preset];
 
-  // 所有模型都是多语言的
-  contexts.push('多语言文档处理');
+  // All models are multilingual
+  contexts.push('Multilingual document processing');
 
-  if (model.performance === 'excellent') contexts.push('高精度要求');
-  if (model.latency.includes('20ms')) contexts.push('快速响应');
+  if (model.performance === 'excellent') contexts.push('High accuracy requirements');
+  if (model.latency.includes('20ms')) contexts.push('Fast response');
 
-  // 根据模型大小添加场景
+  // Add scenarios based on model size
   const sizeInMB = parseInt(model.size.replace('MB', ''));
   if (sizeInMB < 300) {
-    contexts.push('移动设备');
-    contexts.push('轻量级部署');
+    contexts.push('Mobile devices');
+    contexts.push('Lightweight deployment');
   }
 
   if (preset === 'multilingual-e5-small') {
-    contexts.push('轻量级部署');
+    contexts.push('Lightweight deployment');
   } else if (preset === 'multilingual-e5-base') {
-    contexts.push('高精度要求');
+    contexts.push('High accuracy requirements');
   }
 
   return contexts;
@@ -189,7 +189,7 @@ export function getModelIdentifierWithVersion(
 }
 
 /**
- * 获取所有可用模型的大小对比
+ * Get size comparison of all available models
  */
 export function getAllModelSizes() {
   const models = Object.entries(PREDEFINED_MODELS).map(([preset, config]) => {
@@ -203,7 +203,7 @@ export function getAllModelSizes() {
     };
   });
 
-  // 按大小排序
+  // Sort by size
   return models.sort((a, b) => {
     const sizeA = parseInt(a.size.replace('MB', ''));
     const sizeB = parseInt(b.size.replace('MB', ''));
@@ -211,23 +211,23 @@ export function getAllModelSizes() {
   });
 }
 
-// 定义一些必要的类型
+// Define necessary types
 interface ModelConfig {
   modelIdentifier: string;
-  localModelPathPrefix?: string; // 本地模型的基础路径 (相对于 public)
-  onnxModelFile?: string; // ONNX模型文件名
+  localModelPathPrefix?: string; // Base path for local models (relative to public)
+  onnxModelFile?: string; // ONNX model filename
   maxLength?: number;
   cacheSize?: number;
   numThreads?: number;
   executionProviders?: string[];
   useLocalFiles?: boolean;
-  workerPath?: string; // Worker 脚本路径 (相对于插件根目录)
-  concurrentLimit?: number; // Worker 任务并发限制
-  forceOffscreen?: boolean; // 强制使用offscreen模式（用于测试）
-  modelPreset?: ModelPreset; // 预定义模型选择
-  dimension?: number; // 向量维度（从预设模型自动获取）
-  modelVersion?: 'full' | 'quantized' | 'compressed'; // 模型版本选择
-  requiresTokenTypeIds?: boolean; // 模型是否需要token_type_ids输入
+  workerPath?: string; // Worker script path (relative to extension root)
+  concurrentLimit?: number; // Worker task concurrency limit
+  forceOffscreen?: boolean; // Force offscreen mode (for testing)
+  modelPreset?: ModelPreset; // Predefined model selection
+  dimension?: number; // Vector dimension (auto-obtained from preset model)
+  modelVersion?: 'full' | 'quantized' | 'compressed'; // Model version selection
+  requiresTokenTypeIds?: boolean; // Whether model requires token_type_ids input
 }
 
 interface WorkerMessagePayload {
@@ -258,7 +258,7 @@ interface WorkerStats {
   batchSize?: number;
 }
 
-// 内存池管理器
+// Memory pool manager
 class EmbeddingMemoryPool {
   private pools: Map<number, Float32Array[]> = new Map();
   private maxPoolSize: number = 10;
@@ -283,7 +283,7 @@ class EmbeddingMemoryPool {
 
     const pool = this.pools.get(size)!;
     if (pool.length < this.maxPoolSize) {
-      // 清零数组以便重用
+      // Clear array for reuse
       embedding.fill(0);
       pool.push(embedding);
       this.stats.released++;
@@ -307,15 +307,15 @@ interface PendingMessage {
 }
 
 interface TokenizedOutput {
-  // 模拟 transformers.js tokenizer 输出的一部分
+  // Simulates part of transformers.js tokenizer output
   input_ids: TransformersTensor;
   attention_mask: TransformersTensor;
   token_type_ids?: TransformersTensor;
 }
 
 /**
- * SemanticSimilarityEngine代理类
- * 用于ContentIndexer等组件复用offscreen中的引擎实例，避免重复下载模型
+ * SemanticSimilarityEngine proxy class
+ * Used by ContentIndexer and other components to reuse engine instance in offscreen, avoiding duplicate model downloads
  */
 export class SemanticSimilarityEngineProxy {
   private _isInitialized = false;
@@ -336,12 +336,12 @@ export class SemanticSimilarityEngineProxy {
     try {
       console.log('SemanticSimilarityEngineProxy: Starting proxy initialization...');
 
-      // 确保offscreen document存在
+      // Ensure offscreen document exists
       console.log('SemanticSimilarityEngineProxy: Ensuring offscreen document exists...');
       await this.offscreenManager.ensureOffscreenDocument();
       console.log('SemanticSimilarityEngineProxy: Offscreen document ready');
 
-      // 确保offscreen中的引擎已初始化
+      // Ensure engine in offscreen is initialized
       console.log('SemanticSimilarityEngineProxy: Ensuring offscreen engine is initialized...');
       await this.ensureOffscreenEngineInitialized();
 
@@ -358,7 +358,7 @@ export class SemanticSimilarityEngineProxy {
   }
 
   /**
-   * 检查offscreen中的引擎状态
+   * Check engine status in offscreen
    */
   private async checkOffscreenEngineStatus(): Promise<{
     isInitialized: boolean;
@@ -384,7 +384,7 @@ export class SemanticSimilarityEngineProxy {
   }
 
   /**
-   * 确保offscreen中的引擎已初始化
+   * Ensure engine in offscreen is initialized
    */
   private async ensureOffscreenEngineInitialized(): Promise<void> {
     const status = await this.checkOffscreenEngineStatus();
@@ -394,7 +394,7 @@ export class SemanticSimilarityEngineProxy {
         'SemanticSimilarityEngineProxy: Engine not initialized in offscreen, initializing...',
       );
 
-      // 重新初始化引擎
+      // Reinitialize engine
       const response = await chrome.runtime.sendMessage({
         target: 'offscreen',
         type: OFFSCREEN_MESSAGE_TYPES.SIMILARITY_ENGINE_INIT,
@@ -410,7 +410,7 @@ export class SemanticSimilarityEngineProxy {
   }
 
   /**
-   * 发送消息到offscreen document，带重试机制和自动重新初始化
+   * Send message to offscreen document with retry mechanism and auto-reinitialization
    */
   private async sendMessageToOffscreen(message: any, maxRetries: number = 3): Promise<any> {
     // 确保offscreen document存在
@@ -431,14 +431,14 @@ export class SemanticSimilarityEngineProxy {
           throw new Error('No response received from offscreen document');
         }
 
-        // 如果收到引擎未初始化的错误，尝试重新初始化
+        // If engine not initialized error received, try to reinitialize
         if (!response.success && response.error && response.error.includes('not initialized')) {
           console.log(
             'SemanticSimilarityEngineProxy: Engine not initialized, attempting to reinitialize...',
           );
           await this.ensureOffscreenEngineInitialized();
 
-          // 重新发送原始消息
+          // Resend original message
           const retryResponse = await chrome.runtime.sendMessage(message);
           if (retryResponse && retryResponse.success) {
             return retryResponse;
@@ -453,7 +453,7 @@ export class SemanticSimilarityEngineProxy {
           error,
         );
 
-        // 如果是引擎未初始化的错误，尝试重新初始化
+        // If engine not initialized error, try to reinitialize
         if (error instanceof Error && error.message.includes('not initialized')) {
           try {
             console.log(
@@ -461,7 +461,7 @@ export class SemanticSimilarityEngineProxy {
             );
             await this.ensureOffscreenEngineInitialized();
 
-            // 重新发送原始消息
+            // Resend original message
             const retryResponse = await chrome.runtime.sendMessage(message);
             if (retryResponse && retryResponse.success) {
               return retryResponse;
@@ -475,10 +475,10 @@ export class SemanticSimilarityEngineProxy {
         }
 
         if (attempt < maxRetries) {
-          // 等待一段时间后重试
+          // Wait before retry
           await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
 
-          // 重新确保offscreen document存在
+          // Re-ensure offscreen document exists
           try {
             await this.offscreenManager.ensureOffscreenDocument();
           } catch (offscreenError) {
@@ -501,7 +501,7 @@ export class SemanticSimilarityEngineProxy {
       await this.initialize();
     }
 
-    // 在每次调用前检查并确保引擎已初始化
+    // Check and ensure engine is initialized before each call
     await this.ensureOffscreenEngineInitialized();
 
     const response = await this.sendMessageToOffscreen({
@@ -532,7 +532,7 @@ export class SemanticSimilarityEngineProxy {
 
     if (!texts || texts.length === 0) return [];
 
-    // 在每次调用前检查并确保引擎已初始化
+    // Check and ensure engine is initialized before each call
     await this.ensureOffscreenEngineInitialized();
 
     const response = await this.sendMessageToOffscreen({
@@ -566,7 +566,7 @@ export class SemanticSimilarityEngineProxy {
       await this.initialize();
     }
 
-    // 在每次调用前检查并确保引擎已初始化
+    // Check and ensure engine is initialized before each call
     await this.ensureOffscreenEngineInitialized();
 
     const response = await this.sendMessageToOffscreen({
@@ -609,7 +609,7 @@ export class SemanticSimilarityEngineProxy {
   }
 
   async dispose(): Promise<void> {
-    // 代理类不需要清理资源，实际资源由offscreen管理
+    // Proxy class doesn't need to clean up resources, actual resources are managed by offscreen
     this._isInitialized = false;
     console.log('SemanticSimilarityEngineProxy: Proxy disposed');
   }
@@ -623,16 +623,16 @@ export class SemanticSimilarityEngine {
   private initPromise: Promise<void> | null = null;
   private nextTokenId = 0;
   private pendingMessages = new Map<number, PendingMessage>();
-  private useOffscreen = false; // 是否使用offscreen模式
+  private useOffscreen = false; // Whether to use offscreen mode
 
   public readonly config: Required<ModelConfig>;
 
   private embeddingCache: LRUCache<string, Float32Array>;
-  // 新增：tokenization 缓存
+  // Added: tokenization cache
   private tokenizationCache: LRUCache<string, TokenizedOutput>;
-  // 新增：内存池管理器
+  // Added: memory pool manager
   private memoryPool: EmbeddingMemoryPool;
-  // 新增：SIMD 数学引擎
+  // Added: SIMD math engine
   private simdMath: SIMDMathEngine | null = null;
   private useSIMD = false;
 
@@ -657,16 +657,16 @@ export class SemanticSimilarityEngine {
   private workerTaskQueue: (() => void)[] = [];
 
   /**
-   * 检测当前运行环境是否支持Worker
+   * Detect if current runtime environment supports Worker
    */
   private isWorkerSupported(): boolean {
     try {
-      // 检查是否在Service Worker环境中（background script）
+      // Check if in Service Worker environment (background script)
       if (typeof importScripts === 'function') {
         return false;
       }
 
-      // 检查Worker构造函数是否可用
+      // Check if Worker constructor is available
       return typeof Worker !== 'undefined';
     } catch {
       return false;
@@ -674,11 +674,11 @@ export class SemanticSimilarityEngine {
   }
 
   /**
-   * 检测是否在 offscreen document 环境中
+   * Detect if in offscreen document environment
    */
   private isInOffscreenDocument(): boolean {
     try {
-      // 在 offscreen document 中，window.location.pathname 通常是 '/offscreen.html'
+      // In offscreen document, window.location.pathname is usually '/offscreen.html'
       return (
         typeof window !== 'undefined' &&
         window.location &&
@@ -690,7 +690,7 @@ export class SemanticSimilarityEngine {
   }
 
   /**
-   * 确保offscreen document存在
+   * Ensure offscreen document exists
    */
   private async ensureOffscreenDocument(): Promise<void> {
     return OffscreenManager.getInstance().ensureOffscreenDocument();
@@ -716,7 +716,7 @@ export class SemanticSimilarityEngine {
       modelVersion: options.modelVersion,
     });
 
-    // 处理模型预设
+    // Handle model presets
     let modelConfig = { ...options };
     if (options.modelPreset && PREDEFINED_MODELS[options.modelPreset]) {
       const preset = PREDEFINED_MODELS[options.modelPreset];
@@ -729,11 +729,11 @@ export class SemanticSimilarityEngine {
 
       modelConfig = {
         ...options,
-        modelIdentifier: baseModelIdentifier, // 使用基础标识符
-        onnxModelFile: onnxFileName, // 设置对应版本的ONNX文件名
+        modelIdentifier: baseModelIdentifier, // Use base identifier
+        onnxModelFile: onnxFileName, // Set corresponding version ONNX filename
         dimension: preset.dimension,
         modelVersion: modelVersion,
-        requiresTokenTypeIds: modelSpecificConfig.requiresTokenTypeIds !== false, // 默认为true，除非明确设置为false
+        requiresTokenTypeIds: modelSpecificConfig.requiresTokenTypeIds !== false, // Default to true unless explicitly set to false
       };
       console.log(
         `SemanticSimilarityEngine: Using model preset "${options.modelPreset}" with version "${modelVersion}":`,
@@ -746,7 +746,7 @@ export class SemanticSimilarityEngine {
       );
     }
 
-    // 设置默认配置 - 使用2025年推荐的默认模型
+    // Set default configuration - using 2025 recommended default model
     this.config = {
       ...modelConfig,
       modelIdentifier: modelConfig.modelIdentifier || 'Xenova/bge-small-en-v1.5',
@@ -778,7 +778,7 @@ export class SemanticSimilarityEngine {
         console.log('SemanticSimilarityEngine: DEBUG - final useLocalFiles value:', result);
         return result;
       })(),
-      workerPath: modelConfig.workerPath || 'js/similarity.worker.js', // 将由WXT的 `new URL` 覆盖
+      workerPath: modelConfig.workerPath || 'js/similarity.worker.js', // Will be overridden by WXT's `new URL`
       concurrentLimit:
         modelConfig.concurrentLimit ||
         Math.max(
@@ -792,7 +792,7 @@ export class SemanticSimilarityEngine {
       modelPreset: modelConfig.modelPreset || 'bge-small-en-v1.5',
       dimension: modelConfig.dimension || 384,
       modelVersion: modelConfig.modelVersion || 'quantized',
-      requiresTokenTypeIds: modelConfig.requiresTokenTypeIds !== false, // 默认为true
+      requiresTokenTypeIds: modelConfig.requiresTokenTypeIds !== false, // Default to true
     } as Required<ModelConfig>;
 
     console.log('SemanticSimilarityEngine: Final config:', {

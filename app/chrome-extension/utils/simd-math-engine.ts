@@ -81,33 +81,33 @@ export class SIMDMathEngine {
       return pool.pop()!;
     }
 
-    // 创建 16 字节对齐的缓冲区
+    // Create 16-byte aligned buffer
     const buffer = new ArrayBuffer(size * 4 + 15);
     const alignedOffset = (16 - (buffer.byteLength % 16)) % 16;
     return new Float32Array(buffer, alignedOffset, size);
   }
 
   /**
-   * 释放对齐的缓冲区回池中
+   * Release aligned buffer back to pool
    */
   private releaseAlignedBuffer(buffer: Float32Array): void {
     const size = buffer.length;
     const pool = this.alignedBufferPool.get(size);
     if (pool && pool.length < this.maxPoolSize) {
-      buffer.fill(0); // 清零
+      buffer.fill(0); // Clear to zero
       pool.push(buffer);
     }
   }
 
   /**
-   * 检查向量是否已经对齐
+   * Check if vector is already aligned
    */
   private isAligned(array: Float32Array): boolean {
     return array.byteOffset % 16 === 0;
   }
 
   /**
-   * 确保向量对齐，如果不对齐则创建对齐的副本
+   * Ensure vector alignment, create aligned copy if not aligned
    */
   private ensureAligned(array: Float32Array): { aligned: Float32Array; needsRelease: boolean } {
     if (this.isAligned(array)) {
@@ -120,7 +120,7 @@ export class SIMDMathEngine {
   }
 
   /**
-   * SIMD 优化的余弦相似度计算
+   * SIMD-optimized cosine similarity calculation
    */
   async cosineSimilarity(vecA: Float32Array, vecB: Float32Array): Promise<number> {
     if (!this.isInitialized) {
@@ -131,7 +131,7 @@ export class SIMDMathEngine {
       throw new Error('SIMD math engine not initialized');
     }
 
-    // 确保向量对齐
+    // Ensure vector alignment
     const { aligned: alignedA, needsRelease: releaseA } = this.ensureAligned(vecA);
     const { aligned: alignedB, needsRelease: releaseB } = this.ensureAligned(vecB);
 
@@ -139,14 +139,14 @@ export class SIMDMathEngine {
       const result = this.simdMath.cosine_similarity(alignedA, alignedB);
       return result;
     } finally {
-      // 释放临时缓冲区
+      // Release temporary buffers
       if (releaseA) this.releaseAlignedBuffer(alignedA);
       if (releaseB) this.releaseAlignedBuffer(alignedB);
     }
   }
 
   /**
-   * 批量相似度计算
+   * Batch similarity calculation
    */
   async batchSimilarity(vectors: Float32Array[], query: Float32Array): Promise<number[]> {
     if (!this.isInitialized) {
@@ -160,19 +160,19 @@ export class SIMDMathEngine {
     const vectorDim = query.length;
     const numVectors = vectors.length;
 
-    // 将所有向量打包成连续的内存布局
+    // Pack all vectors into contiguous memory layout
     const packedVectors = this.getAlignedBuffer(numVectors * vectorDim);
     const { aligned: alignedQuery, needsRelease: releaseQuery } = this.ensureAligned(query);
 
     try {
-      // 复制向量数据
+      // Copy vector data
       let offset = 0;
       for (const vector of vectors) {
         packedVectors.set(vector, offset);
         offset += vectorDim;
       }
 
-      // 批量计算
+      // Batch calculation
       const results = this.simdMath.batch_similarity(packedVectors, alignedQuery, vectorDim);
       return Array.from(results);
     } finally {
@@ -182,7 +182,7 @@ export class SIMDMathEngine {
   }
 
   /**
-   * 相似度矩阵计算
+   * Similarity matrix calculation
    */
   async similarityMatrix(vectorsA: Float32Array[], vectorsB: Float32Array[]): Promise<number[][]> {
     if (!this.isInitialized) {
@@ -197,12 +197,12 @@ export class SIMDMathEngine {
     const numA = vectorsA.length;
     const numB = vectorsB.length;
 
-    // 打包向量
+    // Pack vectors
     const packedA = this.getAlignedBuffer(numA * vectorDim);
     const packedB = this.getAlignedBuffer(numB * vectorDim);
 
     try {
-      // 复制数据
+      // Copy data
       let offsetA = 0;
       for (const vector of vectorsA) {
         packedA.set(vector, offsetA);
@@ -215,10 +215,10 @@ export class SIMDMathEngine {
         offsetB += vectorDim;
       }
 
-      // 计算矩阵
+      // Calculate matrix
       const flatResults = this.simdMath.similarity_matrix(packedA, packedB, vectorDim);
 
-      // 转换为二维数组
+      // Convert to 2D array
       const matrix: number[][] = [];
       for (let i = 0; i < numA; i++) {
         const row: number[] = [];
@@ -236,44 +236,44 @@ export class SIMDMathEngine {
   }
 
   /**
-   * 检查 SIMD 支持
+   * Check SIMD support
    */
   static async checkSIMDSupport(): Promise<boolean> {
     try {
       console.log('SIMDMathEngine: Checking SIMD support...');
 
-      // 获取浏览器信息
+      // Get browser information
       const userAgent = navigator.userAgent;
       const browserInfo = SIMDMathEngine.getBrowserInfo();
       console.log('Browser info:', browserInfo);
       console.log('User Agent:', userAgent);
 
-      // 检查 WebAssembly 基础支持
+      // Check WebAssembly basic support
       if (typeof WebAssembly !== 'object') {
         console.log('WebAssembly not supported');
         return false;
       }
       console.log('✅ WebAssembly basic support: OK');
 
-      // 检查 WebAssembly.validate 方法
+      // Check WebAssembly.validate method
       if (typeof WebAssembly.validate !== 'function') {
         console.log('❌ WebAssembly.validate not available');
         return false;
       }
       console.log('✅ WebAssembly.validate: OK');
 
-      // 测试基础 WebAssembly 模块验证
+      // Test basic WebAssembly module validation
       const basicWasm = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
       const basicValid = WebAssembly.validate(basicWasm);
       console.log('✅ Basic WASM validation:', basicValid);
 
-      // 检查 WebAssembly SIMD 支持 - 使用正确的SIMD测试模块
+      // Check WebAssembly SIMD support - using correct SIMD test module
       console.log('Testing SIMD WASM module...');
 
-      // 方法1: 使用标准的SIMD检测字节码
+      // Method 1: Use standard SIMD detection bytecode
       let wasmSIMDSupported = false;
       try {
-        // 这是一个包含v128.const指令的最小SIMD模块
+        // This is a minimal SIMD module containing v128.const instruction
         const simdWasm = new Uint8Array([
           0x00,
           0x61,
@@ -325,10 +325,10 @@ export class SIMDMathEngine {
         console.log('Method 1 failed:', error);
       }
 
-      // 方法2: 如果方法1失败，尝试更简单的SIMD指令
+      // Method 2: If method 1 fails, try simpler SIMD instruction
       if (!wasmSIMDSupported) {
         try {
-          // 使用i32x4.splat指令的测试
+          // Test using i32x4.splat instruction
           const simpleSimdWasm = new Uint8Array([
             0x00,
             0x61,
@@ -368,16 +368,16 @@ export class SIMDMathEngine {
         }
       }
 
-      // 方法3: 如果前面都失败，尝试检测特定的SIMD特性
+      // Method 3: If previous methods fail, try detecting specific SIMD features
       if (!wasmSIMDSupported) {
         try {
-          // 检测是否支持SIMD特性标志
+          // Check if SIMD feature flags are supported
           const featureTest = WebAssembly.validate(
             new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
           );
 
           if (featureTest) {
-            // 在Chrome中，如果基础WebAssembly工作且版本>=91，通常SIMD也可用
+            // In Chrome, if basic WebAssembly works and version >= 91, SIMD is usually available
             const chromeMatch = userAgent.match(/Chrome\/(\d+)/);
             if (chromeMatch && parseInt(chromeMatch[1]) >= 91) {
               console.log('Method 3 - Chrome version check: SIMD should be available');
@@ -389,7 +389,7 @@ export class SIMDMathEngine {
         }
       }
 
-      // 输出最终结果
+      // Output final result
       if (!wasmSIMDSupported) {
         console.log('❌ SIMD not supported. Browser requirements:');
         console.log('- Chrome 91+, Firefox 89+, Safari 16.4+, Edge 91+');
@@ -416,7 +416,7 @@ export class SIMDMathEngine {
   }
 
   /**
-   * 获取浏览器信息
+   * Get browser information
    */
   static getBrowserInfo(): { name: string; version: string; supported: boolean } {
     const userAgent = navigator.userAgent;

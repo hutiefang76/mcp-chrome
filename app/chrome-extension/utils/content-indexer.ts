@@ -338,7 +338,7 @@ export class ContentIndexer {
     console.log('ContentIndexer: Starting complete data cleanup for model switch...');
 
     try {
-      // 1. 清理现有的向量数据库实例
+      // Clear existing vector database instance
       if (this.vectorDatabase) {
         try {
           console.log('ContentIndexer: Clearing existing vector database instance...');
@@ -349,7 +349,6 @@ export class ContentIndexer {
         }
       }
 
-
       try {
         const { clearAllVectorData } = await import('./vector-database');
         await clearAllVectorData();
@@ -357,7 +356,6 @@ export class ContentIndexer {
       } catch (error) {
         console.warn('ContentIndexer: Failed to clear vector data:', error);
       }
-
 
       try {
         const keysToRemove = [
@@ -382,15 +380,15 @@ export class ContentIndexer {
           };
           deleteVectorDB.onerror = () => {
             console.warn('ContentIndexer: Failed to delete VectorDatabaseStorage database');
-            resolve(); // 不阻塞流程
+            resolve(); // Don't block the process
           };
           deleteVectorDB.onblocked = () => {
             console.warn('ContentIndexer: VectorDatabaseStorage database deletion blocked');
-            resolve(); // 不阻塞流程
+            resolve(); // Don't block the process
           };
         });
 
-        // 清理hnswlib-index数据库
+        // Clean up hnswlib-index database
         const deleteHnswDB = indexedDB.deleteDatabase('/hnswlib-index');
         await new Promise<void>((resolve) => {
           deleteHnswDB.onsuccess = () => {
@@ -399,11 +397,11 @@ export class ContentIndexer {
           };
           deleteHnswDB.onerror = () => {
             console.warn('ContentIndexer: Failed to delete /hnswlib-index database');
-            resolve(); // 不阻塞流程
+            resolve(); // Don't block the process
           };
           deleteHnswDB.onblocked = () => {
             console.warn('ContentIndexer: /hnswlib-index database deletion blocked');
-            resolve(); // 不阻塞流程
+            resolve(); // Don't block the process
           };
         });
 
@@ -500,7 +498,6 @@ export class ContentIndexer {
   }
 
   private shouldIndexUrl(url: string): boolean {
-
     const excludePatterns = [
       /^chrome:\/\//,
       /^chrome-extension:\/\//,
@@ -522,7 +519,6 @@ export class ContentIndexer {
         files: ['inject-scripts/web-fetcher-helper.js'],
       });
 
-      // Send message to get content
       const response = await chrome.tabs.sendMessage(tabId, {
         action: TOOL_MESSAGE_TYPES.WEB_FETCHER_GET_TEXT_CONTENT,
       });
