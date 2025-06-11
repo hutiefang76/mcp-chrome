@@ -19,6 +19,11 @@ let currentBackgroundModelConfig: ModelConfig | null = null;
  */
 export async function initializeDefaultSemanticEngine(): Promise<void> {
   try {
+    console.log('Background: Initializing default semantic engine...');
+
+    // Update status to initializing
+    await updateModelStatus('initializing', 0);
+
     const result = await chrome.storage.local.get([STORAGE_KEYS.SEMANTIC_MODEL, 'selectedVersion']);
     const defaultModel =
       (result[STORAGE_KEYS.SEMANTIC_MODEL] as ModelPreset) || 'multilingual-e5-small';
@@ -49,11 +54,31 @@ export async function initializeDefaultSemanticEngine(): Promise<void> {
         modelDimension: modelInfo.dimension,
       };
       console.log('Semantic engine initialized successfully:', currentBackgroundModelConfig);
+
+      // Update status to ready
+      await updateModelStatus('ready', 100);
+
+      // Also initialize ContentIndexer now that semantic engine is ready
+      try {
+        const { getGlobalContentIndexer } = await import('@/utils/content-indexer');
+        const contentIndexer = getGlobalContentIndexer();
+        contentIndexer.startSemanticEngineInitialization();
+        console.log('ContentIndexer initialization triggered after semantic engine initialization');
+      } catch (indexerError) {
+        console.warn(
+          'Failed to initialize ContentIndexer after semantic engine initialization:',
+          indexerError,
+        );
+      }
     } else {
-      throw new Error(response?.error || ERROR_MESSAGES.TOOL_EXECUTION_FAILED);
+      const errorMessage = response?.error || ERROR_MESSAGES.TOOL_EXECUTION_FAILED;
+      await updateModelStatus('error', 0, errorMessage, 'unknown');
+      throw new Error(errorMessage);
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Background: Failed to initialize default semantic engine:', error);
+    const errorMessage = error?.message || 'Unknown error during semantic engine initialization';
+    await updateModelStatus('error', 0, errorMessage, 'unknown');
     // Don't throw error, let the extension continue running
   }
 }
@@ -312,6 +337,11 @@ export const initSemanticSimilarityListener = () => {
     } else if (message.type === BACKGROUND_MESSAGE_TYPES.UPDATE_MODEL_STATUS) {
       handleUpdateModelStatus(message.modelState)
         .then((result: { success: boolean; error?: string }) => sendResponse(result))
+        .catch((error: any) => sendResponse({ success: false, error: error.message }));
+      return true;
+    } else if (message.type === BACKGROUND_MESSAGE_TYPES.INITIALIZE_SEMANTIC_ENGINE) {
+      initializeDefaultSemanticEngine()
+        .then(() => sendResponse({ success: true }))
         .catch((error: any) => sendResponse({ success: false, error: error.message }));
       return true;
     }

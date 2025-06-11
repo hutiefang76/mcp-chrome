@@ -13,10 +13,8 @@ export async function handleGetStorageStats(): Promise<{
     const { getGlobalContentIndexer } = await import('@/utils/content-indexer');
     const contentIndexer = getGlobalContentIndexer();
 
-    // Ensure ContentIndexer is initialized
-    if (!contentIndexer.isSemanticEngineReady() && !contentIndexer.isSemanticEngineInitializing()) {
-      contentIndexer.startSemanticEngineInitialization();
-    }
+    // Note: Semantic engine initialization is now user-controlled
+    // ContentIndexer will be initialized when user manually triggers semantic engine initialization
 
     // Get statistics
     const stats = contentIndexer.getStats();

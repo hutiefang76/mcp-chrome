@@ -1,8 +1,5 @@
 import { initNativeHostListener } from './native-host';
-import {
-  initSemanticSimilarityListener,
-  initializeDefaultSemanticEngine,
-} from './semantic-similarity';
+import { initSemanticSimilarityListener } from './semantic-similarity';
 import { initStorageManagerListener } from './storage-manager';
 import { vectorSearchTabsContentTool } from './tools/browser/vector-search';
 import { ERROR_MESSAGES } from '@/common/constants';
@@ -25,6 +22,6 @@ export default defineBackground(() => {
     );
   });
 
-  // Initialize semantic similarity engine
-  initializeDefaultSemanticEngine();
+  // Note: Semantic similarity engine initialization is now user-controlled via popup
+  console.log('Background: Semantic similarity engine initialization is now user-controlled');
 });

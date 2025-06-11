@@ -41,10 +41,13 @@ class VectorSearchTabsContentTool extends BaseBrowserToolExecutor {
 
   /**
    * Start background initialization (non-blocking)
+   * Note: Semantic engine initialization is now user-controlled
    */
   private startBackgroundInitialization(): void {
-    console.log('VectorSearchTabsContentTool: Starting background initialization...');
-    this.contentIndexer.startSemanticEngineInitialization();
+    console.log(
+      'VectorSearchTabsContentTool: Background initialization skipped - semantic engine initialization is now user-controlled',
+    );
+    // this.contentIndexer.startSemanticEngineInitialization(); // Removed automatic initialization
   }
 
   private async initializeIndexer(): Promise<void> {
@@ -261,7 +264,16 @@ class VectorSearchTabsContentTool extends BaseBrowserToolExecutor {
    */
   public async getIndexStats() {
     if (!this.isInitialized) {
-      await this.initializeIndexer();
+      // Don't automatically initialize - just return basic stats
+      return {
+        totalDocuments: 0,
+        totalTabs: 0,
+        indexSize: 0,
+        indexedPages: 0,
+        isInitialized: false,
+        semanticEngineReady: false,
+        semanticEngineInitializing: false,
+      };
     }
     return this.contentIndexer.getStats();
   }

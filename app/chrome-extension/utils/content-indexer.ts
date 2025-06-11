@@ -121,29 +121,31 @@ export class ContentIndexer {
    * Index content of specified tab
    */
   public async indexTabContent(tabId: number): Promise<void> {
-
-    if (
-      !this.isInitialized &&
-      this.semanticEngine &&
-      this.semanticEngine.isInitialized === false &&
-      !this.isInitializing
-    ) {
-      console.log(`ContentIndexer: Skipping tab ${tabId} - semantic engine not ready yet`);
+    // Check if semantic engine is ready before attempting to index
+    if (!this.isSemanticEngineReady() && !this.isSemanticEngineInitializing()) {
+      console.log(
+        `ContentIndexer: Skipping tab ${tabId} - semantic engine not ready and not initializing`,
+      );
       return;
     }
 
     if (!this.isInitialized) {
+      // Only initialize if semantic engine is already ready
+      if (!this.isSemanticEngineReady()) {
+        console.log(
+          `ContentIndexer: Skipping tab ${tabId} - ContentIndexer not initialized and semantic engine not ready`,
+        );
+        return;
+      }
       await this.initialize();
     }
 
     try {
-
       const tab = await chrome.tabs.get(tabId);
       if (!tab.url || !this.shouldIndexUrl(tab.url)) {
         console.log(`ContentIndexer: Skipping tab ${tabId} - URL not indexable`);
         return;
       }
-
 
       const pageKey = `${tab.url}_${tab.title}`;
       if (this.options.skipDuplicates && this.indexedPages.has(pageKey)) {
@@ -153,17 +155,14 @@ export class ContentIndexer {
 
       console.log(`ContentIndexer: Starting to index tab ${tabId}: ${tab.title}`);
 
-
       const content = await this.extractTabContent(tabId);
       if (!content) {
         console.log(`ContentIndexer: No content extracted from tab ${tabId}`);
         return;
       }
 
-
       const chunks = this.textChunker.chunkText(content.textContent, content.title);
       console.log(`ContentIndexer: Generated ${chunks.length} chunks for tab ${tabId}`);
-
 
       const chunksToIndex = chunks.slice(0, this.options.maxChunksPerPage);
       if (chunks.length > this.options.maxChunksPerPage) {
@@ -171,7 +170,6 @@ export class ContentIndexer {
           `ContentIndexer: Limited chunks from ${chunks.length} to ${this.options.maxChunksPerPage}`,
         );
       }
-
 
       for (const chunk of chunksToIndex) {
         try {
@@ -189,7 +187,6 @@ export class ContentIndexer {
         }
       }
 
-
       this.indexedPages.add(pageKey);
 
       console.log(
@@ -204,19 +201,20 @@ export class ContentIndexer {
    * Search content
    */
   public async searchContent(query: string, topK: number = 10) {
-
-    if (
-      !this.isInitialized &&
-      this.semanticEngine &&
-      this.semanticEngine.isInitialized === false &&
-      !this.isInitializing
-    ) {
+    // Check if semantic engine is ready before attempting to search
+    if (!this.isSemanticEngineReady() && !this.isSemanticEngineInitializing()) {
       throw new Error(
-        'Semantic engine is not ready yet. Please wait for model download to complete.',
+        'Semantic engine is not ready yet. Please initialize the semantic engine first.',
       );
     }
 
     if (!this.isInitialized) {
+      // Only initialize if semantic engine is already ready
+      if (!this.isSemanticEngineReady()) {
+        throw new Error(
+          'ContentIndexer not initialized and semantic engine not ready. Please initialize the semantic engine first.',
+        );
+      }
       await this.initialize();
     }
 
@@ -228,7 +226,6 @@ export class ContentIndexer {
       return results;
     } catch (error) {
       console.error('ContentIndexer: Search failed:', error);
-
 
       if (error instanceof Error && error.message.includes('not initialized')) {
         console.log(
@@ -277,10 +274,30 @@ export class ContentIndexer {
   }
 
   /**
-   * Check if semantic engine is ready
+   * Check if semantic engine is ready (checks both local and global state)
    */
   public isSemanticEngineReady(): boolean {
     return this.semanticEngine && this.semanticEngine.isInitialized;
+  }
+
+  /**
+   * Check if global semantic engine is ready (in background/offscreen)
+   */
+  public async isGlobalSemanticEngineReady(): Promise<boolean> {
+    try {
+      // Since ContentIndexer runs in background script, directly call the function instead of sending message
+      const { handleGetModelStatus } = await import('@/entrypoints/background/semantic-similarity');
+      const response = await handleGetModelStatus();
+      return (
+        response &&
+        response.success &&
+        response.status &&
+        response.status.initializationStatus === 'ready'
+      );
+    } catch (error) {
+      console.error('ContentIndexer: Failed to check global semantic engine status:', error);
+      return false;
+    }
   }
 
   /**
@@ -419,13 +436,29 @@ export class ContentIndexer {
 
   /**
    * Manually trigger semantic engine initialization (async, don't wait for completion)
+   * Note: This should only be called after the semantic engine is already initialized by user action
    */
   public startSemanticEngineInitialization(): void {
     if (!this.isInitialized && !this.isInitializing) {
-      console.log('ContentIndexer: Starting semantic engine initialization in background...');
-      this.initialize().catch((error) => {
-        console.error('ContentIndexer: Background initialization failed:', error);
-      });
+      // Check if global semantic engine is ready before initializing ContentIndexer
+      this.isGlobalSemanticEngineReady()
+        .then((isReady) => {
+          if (isReady) {
+            console.log(
+              'ContentIndexer: Starting ContentIndexer initialization (global semantic engine ready)...',
+            );
+            this.initialize().catch((error) => {
+              console.error('ContentIndexer: Background initialization failed:', error);
+            });
+          } else {
+            console.log(
+              'ContentIndexer: Skipping initialization - global semantic engine not ready yet',
+            );
+          }
+        })
+        .catch((error) => {
+          console.error('ContentIndexer: Failed to check global semantic engine status:', error);
+        });
     }
   }
 
