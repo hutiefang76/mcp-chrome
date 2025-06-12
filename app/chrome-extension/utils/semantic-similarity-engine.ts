@@ -5,181 +5,7 @@ import { SIMDMathEngine } from './simd-math-engine';
 import { OffscreenManager } from './offscreen-manager';
 import { OFFSCREEN_MESSAGE_TYPES } from '@/common/message-types';
 
-// Cache configuration for ONNX models
-const CACHE_NAME = 'onnx-model-cache-v1'; // Change version to force cache update
-const CACHE_EXPIRY_DAYS = 7; // Cache expiry in days
-const MAX_CACHE_SIZE_MB = 500; // Maximum cache size in MB
-
-/**
- * Cache metadata interface
- */
-interface CacheMetadata {
-  timestamp: number;
-  modelUrl: string;
-  size: number;
-  version: string;
-}
-
-/**
- * Get cache metadata key for a model URL
- */
-function getCacheMetadataKey(modelUrl: string): string {
-  return `metadata:${modelUrl}`;
-}
-
-/**
- * Check if cache entry is expired
- */
-function isCacheExpired(metadata: CacheMetadata): boolean {
-  const now = Date.now();
-  const expiryTime = metadata.timestamp + CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-  return now > expiryTime;
-}
-
-/**
- * Get total cache size in bytes
- */
-async function getCacheTotalSize(): Promise<number> {
-  const cache = await caches.open(CACHE_NAME);
-  const keys = await cache.keys();
-  let totalSize = 0;
-
-  for (const request of keys) {
-    if (request.url.startsWith('metadata:')) continue; // Skip metadata entries
-
-    const response = await cache.match(request);
-    if (response) {
-      const blob = await response.blob();
-      totalSize += blob.size;
-    }
-  }
-
-  return totalSize;
-}
-
-/**
- * Clean up expired cache entries
- */
-async function cleanupExpiredCache(): Promise<void> {
-  const cache = await caches.open(CACHE_NAME);
-  const keys = await cache.keys();
-  const expiredEntries: string[] = [];
-
-  for (const request of keys) {
-    if (request.url.startsWith('metadata:')) {
-      try {
-        const response = await cache.match(request);
-        if (response) {
-          const metadata: CacheMetadata = await response.json();
-          if (isCacheExpired(metadata)) {
-            expiredEntries.push(metadata.modelUrl);
-            await cache.delete(request); // Delete metadata
-          }
-        }
-      } catch (error) {
-        console.warn('Failed to parse cache metadata:', error);
-        await cache.delete(request); // Delete invalid metadata
-      }
-    }
-  }
-
-  // Delete expired model data
-  for (const modelUrl of expiredEntries) {
-    await cache.delete(modelUrl);
-    console.log(`Cleaned up expired cache entry: ${modelUrl}`);
-  }
-
-  if (expiredEntries.length > 0) {
-    console.log(`Cleaned up ${expiredEntries.length} expired cache entries`);
-  }
-}
-
-/**
- * Clean up cache entries to stay within size limit
- */
-async function cleanupCacheBySize(): Promise<void> {
-  const totalSize = await getCacheTotalSize();
-  const maxSizeBytes = MAX_CACHE_SIZE_MB * 1024 * 1024;
-
-  if (totalSize <= maxSizeBytes) {
-    return; // Within size limit
-  }
-
-  console.log(
-    `Cache size (${(totalSize / 1024 / 1024).toFixed(2)}MB) exceeds limit (${MAX_CACHE_SIZE_MB}MB), cleaning up...`,
-  );
-
-  const cache = await caches.open(CACHE_NAME);
-  const keys = await cache.keys();
-  const entries: { url: string; timestamp: number; size: number }[] = [];
-
-  // Collect all entries with metadata
-  for (const request of keys) {
-    if (request.url.startsWith('metadata:')) continue;
-
-    const metadataKey = getCacheMetadataKey(request.url);
-    const metadataResponse = await cache.match(metadataKey);
-
-    if (metadataResponse) {
-      try {
-        const metadata: CacheMetadata = await metadataResponse.json();
-        entries.push({
-          url: request.url,
-          timestamp: metadata.timestamp,
-          size: metadata.size,
-        });
-      } catch (error) {
-        // If metadata is corrupted, treat as old entry
-        const response = await cache.match(request);
-        if (response) {
-          const blob = await response.blob();
-          entries.push({
-            url: request.url,
-            timestamp: 0, // Oldest possible timestamp
-            size: blob.size,
-          });
-        }
-      }
-    }
-  }
-
-  // Sort by timestamp (oldest first)
-  entries.sort((a, b) => a.timestamp - b.timestamp);
-
-  // Delete oldest entries until within size limit
-  let currentSize = totalSize;
-  for (const entry of entries) {
-    if (currentSize <= maxSizeBytes) break;
-
-    await cache.delete(entry.url);
-    await cache.delete(getCacheMetadataKey(entry.url));
-    currentSize -= entry.size;
-    console.log(
-      `Cleaned up cache entry: ${entry.url} (${(entry.size / 1024 / 1024).toFixed(2)}MB)`,
-    );
-  }
-
-  console.log(`Cache cleanup complete. New size: ${(currentSize / 1024 / 1024).toFixed(2)}MB`);
-}
-
-/**
- * Store cache metadata
- */
-async function storeCacheMetadata(modelUrl: string, size: number): Promise<void> {
-  const cache = await caches.open(CACHE_NAME);
-  const metadata: CacheMetadata = {
-    timestamp: Date.now(),
-    modelUrl,
-    size,
-    version: CACHE_NAME,
-  };
-
-  const metadataResponse = new Response(JSON.stringify(metadata), {
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  await cache.put(getCacheMetadataKey(modelUrl), metadataResponse);
-}
+import { ModelCacheManager } from './model-cache-manager';
 
 /**
  * Get cached model data, prioritizing cache reads and handling redirected URLs.
@@ -187,80 +13,37 @@ async function storeCacheMetadata(modelUrl: string, size: number): Promise<void>
  * @returns {Promise<ArrayBuffer>} Model data as ArrayBuffer
  */
 async function getCachedModelData(modelUrl: string): Promise<ArrayBuffer> {
-  // Clean up expired cache entries first
-  await cleanupExpiredCache();
+  const cacheManager = ModelCacheManager.getInstance();
 
-  const cache = await caches.open(CACHE_NAME);
-
-  // 1. Check cache using stable URL as key
-  const cachedResponse = await cache.match(modelUrl);
-
-  if (cachedResponse) {
-    // Check if cached entry has valid metadata and is not expired
-    const metadataResponse = await cache.match(getCacheMetadataKey(modelUrl));
-    if (metadataResponse) {
-      try {
-        const metadata: CacheMetadata = await metadataResponse.json();
-        if (!isCacheExpired(metadata)) {
-          console.log('Model found in cache and not expired. Loading from there.');
-          return cachedResponse.arrayBuffer();
-        } else {
-          console.log('Cached model is expired, removing...');
-          await cache.delete(modelUrl);
-          await cache.delete(getCacheMetadataKey(modelUrl));
-        }
-      } catch (error) {
-        console.warn('Failed to parse cache metadata, treating as expired:', error);
-        await cache.delete(modelUrl);
-        await cache.delete(getCacheMetadataKey(modelUrl));
-      }
-    } else {
-      // No metadata, treat as old cache entry
-      console.log('Cached model has no metadata, treating as expired...');
-      await cache.delete(modelUrl);
-    }
+  // 1. 尝试从缓存获取数据
+  const cachedData = await cacheManager.getCachedModelData(modelUrl);
+  if (cachedData) {
+    return cachedData;
   }
 
   console.log('Model not found in cache or expired. Fetching from network...');
 
   try {
-    // 2. Fetch using stable URL. Browser will automatically handle redirects.
+    // 2. 从网络获取数据
     const response = await fetch(modelUrl);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
     }
 
-    // Get response size
-    const blob = await response.blob();
-    const modelSize = blob.size;
-
-    // Check if we need to clean up cache by size before storing
-    await cleanupCacheBySize();
-
-    // 3. Store the response in cache using stable URL as key
-    const responseForCache = new Response(blob, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-
-    await cache.put(modelUrl, responseForCache);
-
-    // 4. Store metadata
-    await storeCacheMetadata(modelUrl, modelSize);
+    // 3. 获取数据并存储到缓存
+    const arrayBuffer = await response.arrayBuffer();
+    await cacheManager.storeModelData(modelUrl, arrayBuffer);
 
     console.log(
-      `Model fetched from network and successfully cached (${(modelSize / 1024 / 1024).toFixed(2)}MB).`,
+      `Model fetched from network and successfully cached (${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB).`,
     );
 
-    // 5. Return ArrayBuffer
-    return blob.arrayBuffer();
+    return arrayBuffer;
   } catch (error) {
     console.error(`Error fetching or caching model:`, error);
-    // If fetch fails, try to clear potentially incomplete cache entry
-    await cache.delete(modelUrl);
-    await cache.delete(getCacheMetadataKey(modelUrl));
+    // 如果获取失败，清理可能不完整的缓存条目
+    await cacheManager.deleteCacheEntry(modelUrl);
     throw error;
   }
 }
@@ -270,14 +53,8 @@ async function getCachedModelData(modelUrl: string): Promise<ArrayBuffer> {
  */
 export async function clearModelCache(): Promise<void> {
   try {
-    const cache = await caches.open(CACHE_NAME);
-    const keys = await cache.keys();
-
-    for (const request of keys) {
-      await cache.delete(request);
-    }
-
-    console.log('All model cache entries cleared');
+    const cacheManager = ModelCacheManager.getInstance();
+    await cacheManager.clearAllCache();
   } catch (error) {
     console.error('Failed to clear model cache:', error);
     throw error;
@@ -301,61 +78,8 @@ export async function getCacheStats(): Promise<{
   }>;
 }> {
   try {
-    const cache = await caches.open(CACHE_NAME);
-    const keys = await cache.keys();
-    const entries: any[] = [];
-    let totalSize = 0;
-    let entryCount = 0;
-
-    for (const request of keys) {
-      if (request.url.startsWith('metadata:')) continue;
-
-      const response = await cache.match(request);
-      if (response) {
-        const blob = await response.blob();
-        const size = blob.size;
-        totalSize += size;
-        entryCount++;
-
-        // Get metadata if available
-        const metadataResponse = await cache.match(getCacheMetadataKey(request.url));
-        let timestamp = 0;
-        let expired = false;
-
-        if (metadataResponse) {
-          try {
-            const metadata: CacheMetadata = await metadataResponse.json();
-            timestamp = metadata.timestamp;
-            expired = isCacheExpired(metadata);
-          } catch (error) {
-            expired = true; // Treat corrupted metadata as expired
-          }
-        } else {
-          expired = true; // No metadata means old entry
-        }
-
-        const age =
-          timestamp > 0
-            ? `${Math.round((Date.now() - timestamp) / (1000 * 60 * 60 * 24))} days`
-            : 'unknown';
-
-        entries.push({
-          url: request.url,
-          size,
-          sizeMB: Number((size / 1024 / 1024).toFixed(2)),
-          timestamp,
-          age,
-          expired,
-        });
-      }
-    }
-
-    return {
-      totalSize,
-      totalSizeMB: Number((totalSize / 1024 / 1024).toFixed(2)),
-      entryCount,
-      entries: entries.sort((a, b) => b.timestamp - a.timestamp), // Newest first
-    };
+    const cacheManager = ModelCacheManager.getInstance();
+    return await cacheManager.getCacheStats();
   } catch (error) {
     console.error('Failed to get cache stats:', error);
     throw error;
@@ -367,9 +91,8 @@ export async function getCacheStats(): Promise<{
  */
 export async function cleanupModelCache(): Promise<void> {
   try {
-    await cleanupExpiredCache();
-    await cleanupCacheBySize();
-    console.log('Manual cache cleanup completed');
+    const cacheManager = ModelCacheManager.getInstance();
+    await cacheManager.manualCleanup();
   } catch (error) {
     console.error('Failed to cleanup cache:', error);
     throw error;
@@ -603,6 +326,7 @@ interface ModelConfig {
 
 interface WorkerMessagePayload {
   modelPath?: string;
+  modelData?: ArrayBuffer;
   numThreads?: number;
   executionProviders?: string[];
   input_ids?: number[];

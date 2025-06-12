@@ -526,7 +526,7 @@ const getSemanticEngineButtonText = () => {
 
 const getModelNameFromUrl = (url: string) => {
   // Extract model name from HuggingFace URL
-  const match = url.match(/huggingface\.co\/([^\/]+\/[^\/]+)/);
+  const match = url.match(/huggingface\.co\/([^/]+\/[^/]+)/);
   if (match) {
     return match[1];
   }
