@@ -71,22 +71,61 @@ pnpm install -g mcp-chrome-bridge --unsafe-perm
    - Enable "Developer mode"
    - Click "Load unpacked" and select `your/dowloaded/extension/folder`
    - Click the extension icon to open the plugin, then click connect to see the MCP configuration
-     <img width="475" alt="Screenshot 2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
+   <img width="475" alt="Screenshot 2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
 
-### Usage with Claude Desktop
+### Usage with MCP Protocol Clients
 
-Add the following configuration to Claude Desktop's MCP configuration:
+#### Using Streamable HTTP Connection (👍🏻 Recommended)
+
+Add the following configuration to your MCP client configuration (using CherryStudio as an example):
+> Streamable HTTP connection method is recommended
 
 ```json
 {
   "mcpServers": {
-    "streamable-mcp-server": {
-      "type": "streamable-http",
+    "chrome-mcp-server": {
+      "type": "streamableHttp",
       "url": "http://127.0.0.1:12306/mcp"
     }
   }
 }
 ```
+
+#### Using STDIO Connection (Alternative)
+
+If your client only supports stdio connection method, please use the following approach:
+
+1. First, check the installation location of the npm package you just installed
+
+```sh
+# npm check method
+npm list -g mcp-chrome-bridge
+# pnpm check method
+pnpm list -g mcp-chrome-bridge
+```
+
+Assuming the command above outputs the path: /Users/xxx/Library/pnpm/global/5
+Then your final path would be: /Users/xxx/Library/pnpm/global/5/node_modules/mcp-chrome-bridge/dist/mcp/mcp-server-stdio.js
+
+2. Replace the configuration below with the final path you just obtained
+
+```json
+{
+  "mcpServers": {
+    "chrome-mcp-stdio": {
+      "command": "npx",
+      "args": [
+        "node",
+        "/Users/xxx/Library/pnpm/global/5/node_modules/mcp-chrome-bridge/dist/mcp/mcp-server-stdio.js"
+      ]
+    }
+  }
+}
+```
+
+eg：config in augment:
+
+<img width="494" alt="截屏2025-06-22 22 11 25" src="https://github.com/user-attachments/assets/48eefc0c-a257-4d3b-8bbe-d7ff716de2bf" />
 
 ## 🛠️ Available Tools
 
