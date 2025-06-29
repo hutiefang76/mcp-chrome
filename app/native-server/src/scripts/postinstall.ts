@@ -59,8 +59,21 @@ function detectGlobalInstall(): boolean {
 const isGlobalInstall = detectGlobalInstall();
 
 /**
- * 尝试注册Native Messaging主机
+ * Write Node.js path for run_host scripts to avoid fragile relative paths
  */
+async function writeNodePath(): Promise<void> {
+  try {
+    const nodePath = process.execPath;
+    const nodePathFile = path.join(__dirname, '..', 'node_path.txt');
+
+    console.log(colorText(`Writing Node.js path: ${nodePath}`, 'blue'));
+    fs.writeFileSync(nodePathFile, nodePath, 'utf8');
+    console.log(colorText('✓ Node.js path written for run_host scripts', 'green'));
+  } catch (error: any) {
+    console.warn(colorText(`⚠️ Failed to write Node.js path: ${error.message}`, 'yellow'));
+  }
+}
+
 /**
  * 确保执行权限（无论是否为全局安装）
  */
@@ -256,6 +269,9 @@ async function main(): Promise<void> {
 
   // Always ensure execution permissions first
   await ensureExecutionPermissions();
+
+  // Write Node.js path for run_host scripts to use
+  await writeNodePath();
 
   // If global installation, try automatic registration
   if (isGlobalInstall) {

@@ -1,103 +1,141 @@
-#!/bin/bash
-# 获取脚本所在的绝对目录
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# 日志目录改为脚本同级目录下的 logs 文件夹
-LOG_DIR="${SCRIPT_DIR}/logs"
+#!/usr/bin/env bash
 
-# 获取当前时间戳用于日志文件名
+# Configuration
+ENABLE_LOG_ROTATION="true"
+LOG_RETENTION_COUNT=5
+
+# Setup paths
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_DIR="${SCRIPT_DIR}/logs"
+mkdir -p "${LOG_DIR}"
+
+# Log rotation
+if [ "${ENABLE_LOG_ROTATION}" = "true" ]; then
+    ls -tp "${LOG_DIR}/native_host_wrapper_macos_"* 2>/dev/null | tail -n +$((LOG_RETENTION_COUNT + 1)) | xargs -I {} rm -- {}
+    ls -tp "${LOG_DIR}/native_host_stderr_macos_"* 2>/dev/null | tail -n +$((LOG_RETENTION_COUNT + 1)) | xargs -I {} rm -- {}
+fi
+
+# Logging setup
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 WRAPPER_LOG="${LOG_DIR}/native_host_wrapper_macos_${TIMESTAMP}.log"
 STDERR_LOG="${LOG_DIR}/native_host_stderr_macos_${TIMESTAMP}.log"
-
-# Node.js 脚本的实际路径
 NODE_SCRIPT="${SCRIPT_DIR}/index.js"
 
-# 确保日志目录存在 (如果构建脚本忘记创建，这里会尝试创建)
-mkdir -p "${LOG_DIR}"
+# Initial logging
+{
+    echo "--- Wrapper script called at $(date) ---"
+    echo "SCRIPT_DIR: ${SCRIPT_DIR}"
+    echo "LOG_DIR: ${LOG_DIR}"
+    echo "NODE_SCRIPT: ${NODE_SCRIPT}"
+    echo "Initial PATH: ${PATH}"
+    echo "User: $(whoami)"
+    echo "Current PWD: $(pwd)"
+} > "${WRAPPER_LOG}"
 
-# 记录 wrapper 脚本被调用的信息
-echo "Wrapper script called at $(date)" > "${WRAPPER_LOG}"
-echo "SCRIPT_DIR: ${SCRIPT_DIR}" >> "${WRAPPER_LOG}"
-echo "LOG_DIR: ${LOG_DIR}" >> "${WRAPPER_LOG}"
-echo "NODE_SCRIPT: ${NODE_SCRIPT}" >> "${WRAPPER_LOG}"
-echo "Initial PATH: ${PATH}" >> "${WRAPPER_LOG}"
-echo "User: $(whoami)" >> "${WRAPPER_LOG}"
-echo "Current PWD: $(pwd)" >> "${WRAPPER_LOG}"
-
-
+# Node.js discovery
 NODE_EXEC=""
-# 1. 尝试用 command -v node
-if command -v node &>/dev/null; then
-    NODE_EXEC=$(command -v node)
-    echo "Found node using 'command -v node': ${NODE_EXEC}" >> "${WRAPPER_LOG}"
+
+# Priority 1: Installation-time node path
+NODE_PATH_FILE="${SCRIPT_DIR}/node_path.txt"
+echo "Searching for Node.js..." >> "${WRAPPER_LOG}"
+echo "[Priority 1] Checking installation-time node path" >> "${WRAPPER_LOG}"
+if [ -f "${NODE_PATH_FILE}" ]; then
+    EXPECTED_NODE=$(cat "${NODE_PATH_FILE}" 2>/dev/null | tr -d '\n\r')
+    if [ -n "${EXPECTED_NODE}" ] && [ -x "${EXPECTED_NODE}" ]; then
+        NODE_EXEC="${EXPECTED_NODE}"
+        echo "Found installation-time node at ${NODE_EXEC}" >> "${WRAPPER_LOG}"
+    fi
 fi
 
-# 2. 如果找不到，尝试一些 macOS 上常见的 Node.js 安装路径
+# Priority 1.5: Fallback to relative path
 if [ -z "${NODE_EXEC}" ]; then
-    COMMON_NODE_PATHS=(
-        "/usr/local/bin/node"
-        "/opt/homebrew/bin/node"
-        "$HOME/.nvm/nvm.sh" # Source NVM first if present
-    )
-    # Attempt to source NVM if nvm.sh exists
-    NVM_DIR="$HOME/.nvm"
-    if [ -s "$NVM_DIR/nvm.sh" ]; then
-      echo "Attempting to source NVM from $NVM_DIR/nvm.sh" >> "${WRAPPER_LOG}"
-      # It's tricky to reliably source nvm and get its environment in a non-interactive script
-      # launched by Chrome. A simpler approach for NVM is to find the active version's binary directly.
-      # This often requires a more specific NVM path based on the active version.
-      # The following is a heuristic and might not always work for all NVM setups.
-      # It tries to find the latest installed version if the NVM_SYMLINK_CURRENT is not set.
-      NVM_NODE_PATH=""
-      if [ -n "$(ls -A $NVM_DIR/versions/node 2>/dev/null)" ]; then
-        LATEST_NVM_NODE_VERSION=$(ls -v $NVM_DIR/versions/node | tail -n 1)
-        if [ -x "$NVM_DIR/versions/node/${LATEST_NVM_NODE_VERSION}/bin/node" ]; then
-            NVM_NODE_PATH="$NVM_DIR/versions/node/${LATEST_NVM_NODE_VERSION}/bin/node"
-            echo "Found potential NVM node (latest installed): ${NVM_NODE_PATH}" >> "${WRAPPER_LOG}"
-            COMMON_NODE_PATHS+=("${NVM_NODE_PATH}") # Add to paths to check
-        fi
-      fi
+    EXPECTED_NODE="${SCRIPT_DIR}/../../../bin/node"
+    echo "[Priority 1.5] Checking relative path" >> "${WRAPPER_LOG}"
+    if [ -x "${EXPECTED_NODE}" ]; then
+        NODE_EXEC="${EXPECTED_NODE}"
+        echo "Found node at relative path: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
     fi
+fi
 
-    for path_to_node in "${COMMON_NODE_PATHS[@]}"; do
-        # For nvm.sh, it's not a node executable directly
-        if [[ "${path_to_node}" == *nvm.sh ]]; then
-            continue
+# Priority 2: NVM
+if [ -z "${NODE_EXEC}" ]; then
+    echo "[Priority 2] Checking NVM" >> "${WRAPPER_LOG}"
+    NVM_DIR="$HOME/.nvm"
+    if [ -d "${NVM_DIR}" ]; then
+        # Try default version first
+        if [ -L "${NVM_DIR}/alias/default" ]; then
+            NVM_DEFAULT_VERSION=$(readlink "${NVM_DIR}/alias/default")
+            NVM_DEFAULT_NODE="${NVM_DIR}/versions/node/${NVM_DEFAULT_VERSION}/bin/node"
+            if [ -x "${NVM_DEFAULT_NODE}" ]; then
+                NODE_EXEC="${NVM_DEFAULT_NODE}"
+                echo "Found NVM default node: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
+            fi
         fi
+
+        # Fallback to latest version
+        if [ -z "${NODE_EXEC}" ]; then
+            LATEST_NVM_VERSION_PATH=$(ls -d ${NVM_DIR}/versions/node/v* 2>/dev/null | sort -V | tail -n 1)
+            if [ -n "${LATEST_NVM_VERSION_PATH}" ] && [ -x "${LATEST_NVM_VERSION_PATH}/bin/node" ]; then
+                NODE_EXEC="${LATEST_NVM_VERSION_PATH}/bin/node"
+                echo "Found NVM latest node: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
+            fi
+        fi
+    fi
+fi
+
+# Priority 3: Common paths
+if [ -z "${NODE_EXEC}" ]; then
+    echo "[Priority 3] Checking common paths" >> "${WRAPPER_LOG}"
+    COMMON_NODE_PATHS=(
+        "/opt/homebrew/bin/node"
+        "/usr/local/bin/node"
+    )
+    for path_to_node in "${COMMON_NODE_PATHS[@]}"; do
         if [ -x "${path_to_node}" ]; then
             NODE_EXEC="${path_to_node}"
-            echo "Found node at common path: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
+            echo "Found node at: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
             break
         fi
     done
 fi
 
-# 3. 最后的尝试：在 PATH 中查找
+# Priority 4: command -v
 if [ -z "${NODE_EXEC}" ]; then
-    IFS_OLD=$IFS
+    echo "[Priority 4] Trying 'command -v node'" >> "${WRAPPER_LOG}"
+    if command -v node &>/dev/null; then
+        NODE_EXEC=$(command -v node)
+        echo "Found node using 'command -v': ${NODE_EXEC}" >> "${WRAPPER_LOG}"
+    fi
+fi
+
+# Priority 5: PATH search
+if [ -z "${NODE_EXEC}" ]; then
+    echo "[Priority 5] Searching PATH" >> "${WRAPPER_LOG}"
+    OLD_IFS=$IFS
     IFS=:
-    for path_in_env_path in $PATH; do
-        if [ -x "${path_in_env_path}/node" ]; then
-            NODE_EXEC="${path_in_env_path}/node"
-            echo "Found node in environment PATH: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
+    for path_in_env in $PATH; do
+        if [ -x "${path_in_env}/node" ]; then
+            NODE_EXEC="${path_in_env}/node"
+            echo "Found node in PATH: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
             break
         fi
     done
-    IFS=$IFS_OLD
+    IFS=$OLD_IFS
 fi
 
-
+# Execution
 if [ -z "${NODE_EXEC}" ]; then
-    echo "ERROR: Node.js executable not found!" >> "${WRAPPER_LOG}"
-    echo "Searched 'command -v', common paths, and PATH environment variable." >> "${WRAPPER_LOG}"
+    {
+        echo "ERROR: Node.js executable not found!"
+        echo "Searched: installation path, relative path, NVM, common paths, command -v, PATH"
+    } >> "${WRAPPER_LOG}"
     exit 1
 fi
 
-echo "Using Node executable: ${NODE_EXEC}" >> "${WRAPPER_LOG}"
-echo "Node version found by script: $(${NODE_EXEC} -v)" >> "${WRAPPER_LOG}"
-echo "Executing: ${NODE_EXEC} ${NODE_SCRIPT}" >> "${WRAPPER_LOG}"
+{
+    echo "Using Node executable: ${NODE_EXEC}"
+    echo "Node version: $(${NODE_EXEC} -v)"
+    echo "Executing: ${NODE_EXEC} ${NODE_SCRIPT}"
+} >> "${WRAPPER_LOG}"
 
-# exec会替换当前脚本进程，stderr会直接输出到Chrome（如果它能捕获的话）或丢失
-# 为了确保stderr被记录到文件，我们不直接exec然后重定向整个脚本的stderr
-# 而是让node脚本的stderr重定向
-exec "${NODE_EXEC}" "${NODE_SCRIPT}" 2>> "${STDERR_LOG}"
+exec "${NODE_EXEC}" "${NODE_SCRIPT}" >> "${WRAPPER_LOG}" 2>> "${STDERR_LOG}"

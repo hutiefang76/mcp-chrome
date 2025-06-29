@@ -10,6 +10,20 @@ import {
   ensureExecutionPermissions,
 } from './scripts/utils';
 
+// Import writeNodePath from postinstall
+async function writeNodePath(): Promise<void> {
+  try {
+    const nodePath = process.execPath;
+    const nodePathFile = path.join(__dirname, 'node_path.txt');
+
+    console.log(colorText(`Writing Node.js path: ${nodePath}`, 'blue'));
+    fs.writeFileSync(nodePathFile, nodePath, 'utf8');
+    console.log(colorText('✓ Node.js path written for run_host scripts', 'green'));
+  } catch (error: any) {
+    console.warn(colorText(`⚠️ Failed to write Node.js path: ${error.message}`, 'yellow'));
+  }
+}
+
 program
   .version(require('../package.json').version)
   .description('Mcp Chrome Bridge - Local service for communicating with Chrome extension');
@@ -22,6 +36,9 @@ program
   .option('-s, --system', 'Use system-level installation (requires administrator/sudo privileges)')
   .action(async (options) => {
     try {
+      // Write Node.js path for run_host scripts
+      await writeNodePath();
+
       // Detect if running with root/administrator privileges
       const isRoot = process.getuid && process.getuid() === 0; // Unix/Linux/Mac
 

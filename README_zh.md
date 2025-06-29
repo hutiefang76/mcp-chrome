@@ -61,24 +61,32 @@ npm install -g mcp-chrome-bridge
 pnpm
 
 ```bash
-pnpm install -g mcp-chrome-bridge --unsafe-perm
+# 方法1：全局启用脚本（推荐）
+pnpm config set enable-pre-post-scripts true
+pnpm install -g mcp-chrome-bridge
+
+# 方法2：如果 postinstall 没有运行，手动注册
+pnpm install -g mcp-chrome-bridge
+mcp-chrome-bridge register
 ```
 
-> 注意：使用 pnpm 安装时需要添加 `--unsafe-perm` 参数以确保安装后脚本能正常执行，这对于注册 Native Messaging 主机是必要的。
+> 注意：pnpm v7+ 默认禁用 postinstall 脚本以提高安全性。`enable-pre-post-scripts` 设置控制是否运行 pre/post 安装脚本。如果自动注册失败，请使用上述手动注册命令。
 
 3. **加载 Chrome 扩展**
    - 打开 Chrome 并访问 `chrome://extensions/`
    - 启用"开发者模式"
    - 点击"加载已解压的扩展程序"，选择 `your/dowloaded/extension/folder`
    - 点击插件图标打开插件，点击连接即可看到mcp的配置
-<img width="475" alt="截屏2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
+     <img width="475" alt="截屏2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
 
 ### 在支持MCP协议的客户端中使用
 
 #### 使用streamable http的方式连接（👍🏻推荐）
 
 将以下配置添加到客户端的 MCP 配置中以cherryStudio为例：
+
 > 推荐用streamable http的连接方式
+
 ```json
 {
   "mcpServers": {
@@ -91,6 +99,7 @@ pnpm install -g mcp-chrome-bridge --unsafe-perm
 ```
 
 #### 使用stdio的方式连接（备选）
+
 假设你的客户端仅支持stdio的连接方式，那么请使用下面的方法：
 
 1. 先查看你刚刚安装的npm包的安装位置
@@ -101,6 +110,7 @@ npm list -g mcp-chrome-bridge
 # pnpm 查看方式
 pnpm list -g mcp-chrome-bridge
 ```
+
 假设上面的命令输出的路径是：/Users/xxx/Library/pnpm/global/5
 那么你的最终路径就是：/Users/xxx/Library/pnpm/global/5/node_modules/mcp-chrome-bridge/dist/mcp/mcp-server-stdio.js
 
@@ -119,6 +129,7 @@ pnpm list -g mcp-chrome-bridge
   }
 }
 ```
+
 比如：在augment中的配置如下：
 
 <img width="494" alt="截屏2025-06-22 22 11 25" src="https://github.com/user-attachments/assets/07c0b090-622b-433d-be70-44e8cb8980a5" />
@@ -276,4 +287,3 @@ https://github.com/user-attachments/assets/ff160f48-58e0-4c76-a6b0-c4e1f91370c8
 ## 微信交流群
 
 ![IMG_6248](https://github.com/user-attachments/assets/84de0cd1-6a30-4f10-93c4-c219a9522cbb)
-

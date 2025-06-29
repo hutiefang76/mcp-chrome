@@ -61,23 +61,30 @@ npm install -g mcp-chrome-bridge
 pnpm
 
 ```bash
-pnpm install -g mcp-chrome-bridge --unsafe-perm
+# Method 1: Enable scripts globally (recommended)
+pnpm config set enable-pre-post-scripts true
+pnpm install -g mcp-chrome-bridge
+
+# Method 2: Manual registration (if postinstall doesn't run)
+pnpm install -g mcp-chrome-bridge
+mcp-chrome-bridge register
 ```
 
-> Note: When using pnpm, the `--unsafe-perm` flag is required to ensure post-installation scripts run properly, which is necessary for registering the Native Messaging host.
+> Note: pnpm v7+ disables postinstall scripts by default for security. The `enable-pre-post-scripts` setting controls whether pre/post install scripts run. If automatic registration fails, use the manual registration command above.
 
 3. **Load Chrome Extension**
    - Open Chrome and go to `chrome://extensions/`
    - Enable "Developer mode"
    - Click "Load unpacked" and select `your/dowloaded/extension/folder`
    - Click the extension icon to open the plugin, then click connect to see the MCP configuration
-   <img width="475" alt="Screenshot 2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
+     <img width="475" alt="Screenshot 2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
 
 ### Usage with MCP Protocol Clients
 
 #### Using Streamable HTTP Connection (👍🏻 Recommended)
 
 Add the following configuration to your MCP client configuration (using CherryStudio as an example):
+
 > Streamable HTTP connection method is recommended
 
 ```json
