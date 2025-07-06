@@ -17,7 +17,7 @@ We welcome contributions in many forms:
 
 ### Prerequisites
 
-- **Node.js 18+** and **pnpm** (latest version)
+- **Node.js 18.19.0+** and **pnpm or npm** (latest version)
 - **Chrome/Chromium** browser for testing
 - **Git** for version control
 - **Rust** (for WASM development, optional)
