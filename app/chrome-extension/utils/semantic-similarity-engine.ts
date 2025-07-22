@@ -3,6 +3,7 @@ import type { Tensor as TransformersTensor, PreTrainedTokenizer } from '@xenova/
 import LRUCache from './lru-cache';
 import { SIMDMathEngine } from './simd-math-engine';
 import { OffscreenManager } from './offscreen-manager';
+import { STORAGE_KEYS } from '@/common/constants';
 import { OFFSCREEN_MESSAGE_TYPES } from '@/common/message-types';
 
 import { ModelCacheManager } from './model-cache-manager';
@@ -106,8 +107,9 @@ export async function cleanupModelCache(): Promise<void> {
 export async function isDefaultModelCached(): Promise<boolean> {
   try {
     // Get the default model configuration
-    const result = await chrome.storage.local.get(['semanticModel']);
-    const defaultModel = (result.semanticModel as ModelPreset) || 'multilingual-e5-small';
+    const result = await chrome.storage.local.get([STORAGE_KEYS.SEMANTIC_MODEL]);
+    const defaultModel =
+      (result[STORAGE_KEYS.SEMANTIC_MODEL] as ModelPreset) || 'multilingual-e5-small';
 
     // Build the model URL
     const modelInfo = PREDEFINED_MODELS[defaultModel];

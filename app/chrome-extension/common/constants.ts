@@ -99,7 +99,7 @@ export const SEMANTIC_CONFIG = {
 // Storage Keys
 export const STORAGE_KEYS = {
   SERVER_STATUS: 'serverStatus',
-  SEMANTIC_MODEL: 'semanticModel',
+  SEMANTIC_MODEL: 'selectedModel',
   USER_PREFERENCES: 'userPreferences',
   VECTOR_INDEX: 'vectorIndex',
 } as const;
