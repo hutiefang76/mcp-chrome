@@ -7,6 +7,7 @@ export const TOOL_NAMES = {
     NAVIGATE: 'chrome_navigate',
     SCREENSHOT: 'chrome_screenshot',
     CLOSE_TABS: 'chrome_close_tabs',
+    SWITCH_TAB: 'chrome_switch_tab',
     GO_BACK_OR_FORWARD: 'chrome_go_back_or_forward',
     WEB_FETCHER: 'chrome_get_web_content',
     CLICK: 'chrome_click_element',
@@ -106,6 +107,24 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: [],
+    },
+  },
+  {
+    name: TOOL_NAMES.BROWSER.SWITCH_TAB,
+    description: 'Switch to a specific browser tab',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: {
+          type: 'number',
+          description: 'The ID of the tab to switch to.',
+        },
+        windowId: {
+          type: 'number',
+          description: 'The ID of the window where the tab is located.',
+        },
+      },
+      required: ['tabId'],
     },
   },
   {

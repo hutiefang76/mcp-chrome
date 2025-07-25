@@ -1,4 +1,4 @@
-export { navigateTool, closeTabsTool, goBackOrForwardTool } from './common';
+export { navigateTool, closeTabsTool, goBackOrForwardTool, switchTabTool } from './common';
 export { windowTool } from './window';
 export { vectorSearchTabsContentTool as searchTabsContentTool } from './vector-search';
 export { screenshotTool } from './screenshot';
