@@ -269,20 +269,42 @@ class CloseTabsTool extends BaseBrowserToolExecutor {
       // If URL is provided, close all tabs matching that URL
       if (urlPattern) {
         console.log(`Searching for tabs with URL: ${url}`);
-        if (!urlPattern.endsWith('/')) {
-          urlPattern += '/*';
+        try {
+          // Build a proper Chrome match pattern from a concrete URL.
+          // If caller already provided a match pattern with '*', use as-is.
+          if (!urlPattern.includes('*')) {
+            // Ignore search/hash; match by origin + pathname prefix.
+            // Use URL to normalize; fallback to simple suffixing when parsing fails.
+            try {
+              const u = new URL(urlPattern);
+              const basePath = u.pathname || '/';
+              const pathWithWildcard = basePath.endsWith('/') ? `${basePath}*` : `${basePath}/*`;
+              urlPattern = `${u.protocol}//${u.host}${pathWithWildcard}`;
+            } catch {
+              // Not a fully-qualified URL; ensure it ends with wildcard
+              urlPattern = urlPattern.endsWith('/') ? `${urlPattern}*` : `${urlPattern}/*`;
+            }
+          }
+        } catch {
+          // Best-effort: ensure we have some wildcard
+          urlPattern = urlPattern.endsWith('*')
+            ? urlPattern
+            : urlPattern.endsWith('/')
+              ? `${urlPattern}*`
+              : `${urlPattern}/*`;
         }
-        const tabs = await chrome.tabs.query({ url });
+
+        const tabs = await chrome.tabs.query({ url: urlPattern });
 
         if (!tabs || tabs.length === 0) {
-          console.log(`No tabs found with URL: ${url}`);
+          console.log(`No tabs found with URL pattern: ${urlPattern}`);
           return {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify({
                   success: false,
-                  message: `No tabs found with URL: ${url}`,
+                  message: `No tabs found with URL pattern: ${urlPattern}`,
                   closedCount: 0,
                 }),
               },
@@ -291,7 +313,7 @@ class CloseTabsTool extends BaseBrowserToolExecutor {
           };
         }
 
-        console.log(`Found ${tabs.length} tabs with URL: ${url}`);
+        console.log(`Found ${tabs.length} tabs with URL pattern: ${urlPattern}`);
         const tabIdsToClose = tabs
           .map((tab) => tab.id)
           .filter((id): id is number => id !== undefined);

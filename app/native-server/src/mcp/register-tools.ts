@@ -26,7 +26,7 @@ const handleToolCall = async (name: string, args: any): Promise<CallToolResult> 
         args,
       },
       NativeMessageType.CALL_TOOL,
-      30000, // 30秒超时
+      120000, // 延长到 120 秒，避免性能分析等长任务超时
     );
     if (response.status === 'success') {
       return response.data;

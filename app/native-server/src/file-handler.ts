@@ -22,7 +22,7 @@ export class FileHandler {
    * Handle file preparation request from the extension
    */
   async handleFileRequest(request: any): Promise<any> {
-    const { action, fileUrl, base64Data, fileName, filePath } = request;
+    const { action, fileUrl, base64Data, fileName, filePath, traceFilePath, insightName } = request;
 
     try {
       switch (action) {
@@ -38,6 +38,21 @@ export class FileHandler {
 
         case 'cleanupFile':
           return await this.cleanupFile(filePath);
+
+        case 'analyzeTrace': {
+          const targetPath = traceFilePath || filePath;
+          if (!targetPath) {
+            return { success: false, error: 'traceFilePath is required' };
+          }
+          try {
+            // With tsconfig moduleResolution=NodeNext, relative ESM imports need explicit .js extension
+            const { analyzeTraceFile } = await import('./trace-analyzer.js');
+            const res = await analyzeTraceFile(targetPath, insightName);
+            return { success: true, ...res };
+          } catch (e: any) {
+            return { success: false, error: e?.message || String(e) };
+          }
+        }
 
         default:
           return {
@@ -91,7 +106,7 @@ export class FileHandler {
     try {
       // Remove data URL prefix if present
       const base64Content = base64Data.replace(/^data:.*?;base64,/, '');
-      
+
       // Convert base64 to buffer
       const buffer = Buffer.from(base64Content, 'base64');
 

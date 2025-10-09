@@ -111,6 +111,9 @@ importers:
       chalk:
         specifier: ^5.4.1
         version: 5.4.1
+      chrome-devtools-frontend:
+        specifier: ^1.0.1299282
+        version: 1.0.1526630
       chrome-mcp-shared:
         specifier: workspace:*
         version: link:../../packages/shared
@@ -1562,6 +1565,9 @@ packages:
 
   chownr@1.1.4:
     resolution: {integrity: sha512-jJ0bqzaylmJtVnNgzTeSOs8DPavpbYgEr/b0YL8/2GO3xJEhInFmhKMUnEJQjZumK7KXGFhUy89PrsJWlakBVg==}
+
+  chrome-devtools-frontend@1.0.1526630:
+    resolution: {integrity: sha512-zl2taUBtNgA0Mlz1pnL0DfXCYq5M+G9Yo9hFx9b4Y2pJ8Q/J/qepq2/6hC3I/N3tP7KnuJ/+eJcBr2qMewwoag==}
 
   chrome-launcher@1.1.2:
     resolution: {integrity: sha512-YclTJey34KUm5jB1aEJCq807bSievi7Nb/TU4Gu504fUYi3jw3KCIaH6L7nFWQhdEgH3V+wCh+kKD1P5cXnfxw==}
@@ -6137,6 +6143,8 @@ snapshots:
       readdirp: 4.1.2
 
   chownr@1.1.4: {}
+
+  chrome-devtools-frontend@1.0.1526630: {}
 
   chrome-launcher@1.1.2:
     dependencies:
