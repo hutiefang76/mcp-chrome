@@ -1,6 +1,7 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { cdpSessionManager } from '@/utils/cdp-session-manager';
 
 interface FileUploadToolParams {
   selector: string; // CSS selector for the file input element
@@ -17,16 +18,8 @@ interface FileUploadToolParams {
  */
 class FileUploadTool extends BaseBrowserToolExecutor {
   name = TOOL_NAMES.BROWSER.FILE_UPLOAD;
-  private activeDebuggers: Map<number, boolean> = new Map();
-
   constructor() {
     super();
-    // Clean up debuggers on tab removal
-    chrome.tabs.onRemoved.addListener((tabId) => {
-      if (this.activeDebuggers.has(tabId)) {
-        this.cleanupDebugger(tabId);
-      }
-    });
   }
 
   /**
@@ -43,12 +36,10 @@ class FileUploadTool extends BaseBrowserToolExecutor {
     }
 
     if (!filePath && !fileUrl && !base64Data) {
-      return createErrorResponse(
-        'One of filePath, fileUrl, or base64Data must be provided',
-      );
+      return createErrorResponse('One of filePath, fileUrl, or base64Data must be provided');
     }
 
-    let tabId: number | undefined;
+    let tabId: number;
 
     try {
       // Get current tab
@@ -56,7 +47,7 @@ class FileUploadTool extends BaseBrowserToolExecutor {
       if (!tabs[0]?.id) {
         return createErrorResponse('No active tab found');
       }
-      tabId = tabs[0].id;
+      tabId = tabs[0].id!;
 
       // Prepare file paths
       let files: string[] = [];
@@ -78,75 +69,59 @@ class FileUploadTool extends BaseBrowserToolExecutor {
         files = [tempFilePath];
       }
 
-      // Attach debugger to the tab
-      await this.attachDebugger(tabId);
+      // Use shared CDP session manager to attach/do work/detach safely
+      await cdpSessionManager.withSession(tabId, 'file-upload', async () => {
+        // Enable necessary CDP domains
+        await cdpSessionManager.sendCommand(tabId, 'DOM.enable', {});
+        await cdpSessionManager.sendCommand(tabId, 'Runtime.enable', {});
 
-      // Enable necessary CDP domains
-      await chrome.debugger.sendCommand({ tabId }, 'DOM.enable', {});
-      await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable', {});
+        // Get the document
+        const { root } = (await cdpSessionManager.sendCommand(tabId, 'DOM.getDocument', {
+          depth: -1,
+          pierce: true,
+        })) as { root: { nodeId: number } };
 
-      // Get the document
-      const { root } = await chrome.debugger.sendCommand(
-        { tabId },
-        'DOM.getDocument',
-        { depth: -1, pierce: true },
-      ) as { root: { nodeId: number } };
-
-      // Find the file input element using the selector
-      const { nodeId } = await chrome.debugger.sendCommand(
-        { tabId },
-        'DOM.querySelector',
-        {
+        // Find the file input element using the selector
+        const { nodeId } = (await cdpSessionManager.sendCommand(tabId, 'DOM.querySelector', {
           nodeId: root.nodeId,
           selector: selector,
-        },
-      ) as { nodeId: number };
+        })) as { nodeId: number };
 
-      if (!nodeId || nodeId === 0) {
-        throw new Error(`Element with selector "${selector}" not found`);
-      }
-
-      // Verify it's actually a file input
-      const { node } = await chrome.debugger.sendCommand(
-        { tabId },
-        'DOM.describeNode',
-        { nodeId },
-      ) as { node: { nodeName: string; attributes?: string[] } };
-
-      if (node.nodeName !== 'INPUT') {
-        throw new Error(`Element with selector "${selector}" is not an input element`);
-      }
-
-      // Check if it's a file input by looking for type="file" in attributes
-      const attributes = node.attributes || [];
-      let isFileInput = false;
-      for (let i = 0; i < attributes.length; i += 2) {
-        if (attributes[i] === 'type' && attributes[i + 1] === 'file') {
-          isFileInput = true;
-          break;
+        if (!nodeId || nodeId === 0) {
+          throw new Error(`Element with selector "${selector}" not found`);
         }
-      }
 
-      if (!isFileInput) {
-        throw new Error(`Element with selector "${selector}" is not a file input (type="file")`);
-      }
+        // Verify it's actually a file input
+        const { node } = (await cdpSessionManager.sendCommand(tabId, 'DOM.describeNode', {
+          nodeId,
+        })) as { node: { nodeName: string; attributes?: string[] } };
 
-      // Set the files on the input element
-      // This is the key CDP command that Playwright and Puppeteer use
-      await chrome.debugger.sendCommand(
-        { tabId },
-        'DOM.setFileInputFiles',
-        {
-          nodeId: nodeId,
-          files: files,
-        },
-      );
+        if (node.nodeName !== 'INPUT') {
+          throw new Error(`Element with selector "${selector}" is not an input element`);
+        }
 
-      // Trigger change event to ensure the page reacts to the file upload
-      await chrome.debugger.sendCommand(
-        { tabId },
-        'Runtime.evaluate',
-        {
+        // Check if it's a file input by looking for type="file" in attributes
+        const attributes = node.attributes || [];
+        let isFileInput = false;
+        for (let i = 0; i < attributes.length; i += 2) {
+          if (attributes[i] === 'type' && attributes[i + 1] === 'file') {
+            isFileInput = true;
+            break;
+          }
+        }
+
+        if (!isFileInput) {
+          throw new Error(`Element with selector "${selector}" is not a file input (type="file")`);
+        }
+
+        // Set the files on the input element
+        await cdpSessionManager.sendCommand(tabId, 'DOM.setFileInputFiles', {
+          nodeId,
+          files,
+        });
+
+        // Trigger change event to ensure the page reacts to the file upload
+        await cdpSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
           expression: `
             (function() {
               const element = document.querySelector('${selector.replace(/'/g, "\\'")}');
@@ -158,11 +133,8 @@ class FileUploadTool extends BaseBrowserToolExecutor {
               return false;
             })()
           `,
-        },
-      );
-
-      // Clean up debugger
-      await this.detachDebugger(tabId);
+        });
+      });
 
       return {
         content: [
@@ -181,11 +153,8 @@ class FileUploadTool extends BaseBrowserToolExecutor {
       };
     } catch (error) {
       console.error('Error in file upload operation:', error);
-      
-      // Clean up debugger if attached
-      if (tabId !== undefined && this.activeDebuggers.has(tabId)) {
-        await this.detachDebugger(tabId);
-      }
+
+      // Session manager handles detach; nothing extra needed here
 
       return createErrorResponse(
         `Error uploading file: ${error instanceof Error ? error.message : String(error)}`,
@@ -193,58 +162,7 @@ class FileUploadTool extends BaseBrowserToolExecutor {
     }
   }
 
-  /**
-   * Attach debugger to a tab
-   */
-  private async attachDebugger(tabId: number): Promise<void> {
-    // Check if debugger is already attached
-    const targets = await chrome.debugger.getTargets();
-    const existingTarget = targets.find(
-      (t) => t.tabId === tabId && t.attached,
-    );
-
-    if (existingTarget) {
-      if (existingTarget.extensionId === chrome.runtime.id) {
-        // Our extension already attached
-        console.log('Debugger already attached by this extension');
-        return;
-      } else {
-        throw new Error(
-          'Debugger is already attached to this tab by another extension or DevTools',
-        );
-      }
-    }
-
-    // Attach debugger
-    await chrome.debugger.attach({ tabId }, '1.3');
-    this.activeDebuggers.set(tabId, true);
-    console.log(`Debugger attached to tab ${tabId}`);
-  }
-
-  /**
-   * Detach debugger from a tab
-   */
-  private async detachDebugger(tabId: number): Promise<void> {
-    if (!this.activeDebuggers.has(tabId)) {
-      return;
-    }
-
-    try {
-      await chrome.debugger.detach({ tabId });
-      console.log(`Debugger detached from tab ${tabId}`);
-    } catch (error) {
-      console.warn(`Error detaching debugger from tab ${tabId}:`, error);
-    } finally {
-      this.activeDebuggers.delete(tabId);
-    }
-  }
-
-  /**
-   * Clean up debugger connection
-   */
-  private cleanupDebugger(tabId: number): void {
-    this.activeDebuggers.delete(tabId);
-  }
+  // All debugger attach/detach is centrally managed by cdpSessionManager
 
   /**
    * Prepare file from URL or base64 data using native messaging host
@@ -265,15 +183,20 @@ class FileUploadTool extends BaseBrowserToolExecutor {
 
       // Create listener for the response
       const handleMessage = (message: any) => {
-        if (message.type === 'file_operation_response' && 
-            message.responseToRequestId === requestId) {
+        if (
+          message.type === 'file_operation_response' &&
+          message.responseToRequestId === requestId
+        ) {
           clearTimeout(timeout);
           chrome.runtime.onMessage.removeListener(handleMessage);
-          
+
           if (message.payload?.success && message.payload?.filePath) {
             resolve(message.payload.filePath);
           } else {
-            console.error('Native host failed to prepare file:', message.error || message.payload?.error);
+            console.error(
+              'Native host failed to prepare file:',
+              message.error || message.payload?.error,
+            );
             resolve(null);
           }
         }
@@ -283,24 +206,26 @@ class FileUploadTool extends BaseBrowserToolExecutor {
       chrome.runtime.onMessage.addListener(handleMessage);
 
       // Send message to background script to forward to native host
-      chrome.runtime.sendMessage({
-        type: 'forward_to_native',
-        message: {
-          type: 'file_operation',
-          requestId: requestId,
-          payload: {
-            action: 'prepareFile',
-            fileUrl,
-            base64Data,
-            fileName,
+      chrome.runtime
+        .sendMessage({
+          type: 'forward_to_native',
+          message: {
+            type: 'file_operation',
+            requestId: requestId,
+            payload: {
+              action: 'prepareFile',
+              fileUrl,
+              base64Data,
+              fileName,
+            },
           },
-        },
-      }).catch((error) => {
-        console.error('Error sending message to background:', error);
-        clearTimeout(timeout);
-        chrome.runtime.onMessage.removeListener(handleMessage);
-        resolve(null);
-      });
+        })
+        .catch((error) => {
+          console.error('Error sending message to background:', error);
+          clearTimeout(timeout);
+          chrome.runtime.onMessage.removeListener(handleMessage);
+          resolve(null);
+        });
     });
   }
 }

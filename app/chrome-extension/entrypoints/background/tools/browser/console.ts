@@ -1,6 +1,7 @@
 import { createErrorResponse, ToolResult } from '@/common/tool-handler';
 import { BaseBrowserToolExecutor } from '../base-browser';
 import { TOOL_NAMES } from 'chrome-mcp-shared';
+import { cdpSessionManager } from '@/utils/cdp-session-manager';
 
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const DEFAULT_MAX_MESSAGES = 100;
@@ -16,6 +17,7 @@ interface ConsoleMessage {
   level: string;
   text: string;
   args?: any[];
+  argsSerialized?: any[];
   source?: string;
   url?: string;
   lineNumber?: number;
@@ -177,28 +179,8 @@ class ConsoleTool extends BaseBrowserToolExecutor {
       // Get tab information
       const tab = await chrome.tabs.get(tabId);
 
-      // Check if debugger is already attached
-      const targets = await chrome.debugger.getTargets();
-      const existingTarget = targets.find(
-        (t) => t.tabId === tabId && t.attached && t.type === 'page',
-      );
-      if (existingTarget && !existingTarget.extensionId) {
-        throw new Error(
-          `Debugger is already attached to tab ${tabId} by another tool (e.g., DevTools).`,
-        );
-      }
-
-      // Attach debugger
-      try {
-        await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION);
-      } catch (error: any) {
-        if (error.message?.includes('Cannot attach to the target with an attached client')) {
-          throw new Error(
-            `Debugger is already attached to tab ${tabId}. This might be DevTools or another extension.`,
-          );
-        }
-        throw error;
-      }
+      // Attach via shared manager
+      await cdpSessionManager.attach(tabId, 'console');
 
       // Set up event listener to collect messages
       const collectedMessages: any[] = [];
@@ -235,15 +217,90 @@ class ConsoleTool extends BaseBrowserToolExecutor {
 
       try {
         // Enable Runtime domain first to capture console API calls and exceptions
-        await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable');
+        await cdpSessionManager.sendCommand(tabId, 'Runtime.enable');
 
         // Also enable Log domain to capture other log entries
-        await chrome.debugger.sendCommand({ tabId }, 'Log.enable');
+        await cdpSessionManager.sendCommand(tabId, 'Log.enable');
 
         // Wait for all messages to be flushed
         await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // Process collected messages
+        // Helper to deeply serialize console arguments when possible
+        const serializeArg = async (arg: any): Promise<any> => {
+          try {
+            if (!arg) return arg;
+            if (Object.prototype.hasOwnProperty.call(arg, 'unserializableValue')) {
+              return arg.unserializableValue;
+            }
+            if (Object.prototype.hasOwnProperty.call(arg, 'value')) {
+              return arg.value;
+            }
+            if (arg.objectId) {
+              const resp = (await cdpSessionManager.sendCommand(tabId, 'Runtime.callFunctionOn', {
+                objectId: arg.objectId,
+                functionDeclaration:
+                  'function(maxDepth, maxProps){\n' +
+                  '  const seen=new WeakSet();\n' +
+                  '  function S(v,d){\n' +
+                  '    try{\n' +
+                  '      if(d<0) return "[MaxDepth]";\n' +
+                  '      if(v===null) return null;\n' +
+                  '      const t=typeof v;\n' +
+                  '      if(t!=="object"){\n' +
+                  '        if(t==="bigint") return v.toString()+"n";\n' +
+                  '        return v;\n' +
+                  '      }\n' +
+                  '      if(seen.has(v)) return "[Circular]";\n' +
+                  '      seen.add(v);\n' +
+                  '      if(Array.isArray(v)){\n' +
+                  '        const out=[];\n' +
+                  '        for(let i=0;i<v.length;i++){\n' +
+                  '          if(i>=maxProps){ out.push("[...truncated]"); break; }\n' +
+                  '          out.push(S(v[i], d-1));\n' +
+                  '        }\n' +
+                  '        return out;\n' +
+                  '      }\n' +
+                  '      if(v instanceof Date) return {__type:"Date", value:v.toISOString()};\n' +
+                  '      if(v instanceof RegExp) return {__type:"RegExp", value:String(v)};\n' +
+                  '      if(v instanceof Map){\n' +
+                  '        const out={__type:"Map", entries:[]}; let c=0;\n' +
+                  '        for(const [k,val] of v.entries()){\n' +
+                  '          if(c++>=maxProps){ out.entries.push(["[...truncated]","[...truncated]"]); break; }\n' +
+                  '          out.entries.push([S(k,d-1), S(val,d-1)]);\n' +
+                  '        }\n' +
+                  '        return out;\n' +
+                  '      }\n' +
+                  '      if(v instanceof Set){\n' +
+                  '        const out={__type:"Set", values:[]}; let c=0;\n' +
+                  '        for(const val of v.values()){\n' +
+                  '          if(c++>=maxProps){ out.values.push("[...truncated]"); break; }\n' +
+                  '          out.values.push(S(val,d-1));\n' +
+                  '        }\n' +
+                  '        return out;\n' +
+                  '      }\n' +
+                  '      const out={}; let c=0;\n' +
+                  '      for(const key in v){\n' +
+                  '        if(c++>=maxProps){ out.__truncated__=true; break; }\n' +
+                  '        try{ out[key]=S(v[key], d-1); }catch(e){ out[key]="[Thrown]"; }\n' +
+                  '      }\n' +
+                  '      return out;\n' +
+                  '    }catch(e){ return "[Unserializable]" }\n' +
+                  '  }\n' +
+                  '  return S(this, maxDepth);\n' +
+                  '}',
+                arguments: [{ value: 3 }, { value: 100 }],
+                silent: true,
+                returnByValue: true,
+              })) as any;
+              return resp?.result?.value ?? '[Unavailable]';
+            }
+            return '[Unknown]';
+          } catch (e) {
+            return '[SerializeError]';
+          }
+        };
+
         for (const entry of collectedMessages) {
           if (messages.length >= maxMessages) {
             limitReached = true;
@@ -265,6 +322,12 @@ class ConsoleTool extends BaseBrowserToolExecutor {
 
           if (entry.args && Array.isArray(entry.args)) {
             message.args = entry.args;
+            // Attempt deep serialization for better fidelity
+            const serialized: any[] = [];
+            for (const a of entry.args) {
+              serialized.push(await serializeArg(a));
+            }
+            message.argsSerialized = serialized;
           }
 
           messages.push(message);
@@ -294,19 +357,19 @@ class ConsoleTool extends BaseBrowserToolExecutor {
         chrome.debugger.onEvent.removeListener(eventListener);
 
         try {
-          await chrome.debugger.sendCommand({ tabId }, 'Runtime.disable');
+          await cdpSessionManager.sendCommand(tabId, 'Runtime.disable');
         } catch (e) {
           console.warn(`ConsoleTool: Error disabling Runtime for tab ${tabId}:`, e);
         }
 
         try {
-          await chrome.debugger.sendCommand({ tabId }, 'Log.disable');
+          await cdpSessionManager.sendCommand(tabId, 'Log.disable');
         } catch (e) {
           console.warn(`ConsoleTool: Error disabling Log for tab ${tabId}:`, e);
         }
 
         try {
-          await chrome.debugger.detach({ tabId });
+          await cdpSessionManager.detach(tabId, 'console');
         } catch (e) {
           console.warn(`ConsoleTool: Error detaching debugger for tab ${tabId}:`, e);
         }
