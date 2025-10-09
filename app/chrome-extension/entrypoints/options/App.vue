@@ -1,115 +1,115 @@
 <template>
   <div class="page">
     <header class="topbar">
-      <h1>Userscripts Manager</h1>
+      <h1>{{ m('userscriptsManagerTitle') }}</h1>
       <div class="switch">
         <label>
           <input type="checkbox" v-model="emergencyDisabled" @change="saveEmergency" />
-          <span>Emergency OFF/ON</span>
+          <span>{{ m('emergencySwitchLabel') }}</span>
         </label>
       </div>
     </header>
 
     <section class="create">
-      <h2>Create / Run</h2>
+      <h2>{{ m('createRunSectionTitle') }}</h2>
       <div class="grid">
         <label>
-          Name
+          {{ m('nameLabel') }}
           <input v-model="form.name" placeholder="optional" />
         </label>
         <label>
-          RunAt
+          {{ m('runAtLabel') }}
           <select v-model="form.runAt">
-            <option value="auto">auto</option>
-            <option value="document_start">document_start</option>
-            <option value="document_end">document_end</option>
-            <option value="document_idle">document_idle</option>
+            <option value="auto">{{ m('runAtAuto') }}</option>
+            <option value="document_start">{{ m('runAtDocumentStart') }}</option>
+            <option value="document_end">{{ m('runAtDocumentEnd') }}</option>
+            <option value="document_idle">{{ m('runAtDocumentIdle') }}</option>
           </select>
         </label>
         <label>
-          World
+          {{ m('worldLabel') }}
           <select v-model="form.world">
-            <option value="auto">auto</option>
-            <option value="ISOLATED">ISOLATED</option>
-            <option value="MAIN">MAIN</option>
+            <option value="auto">{{ m('worldAuto') }}</option>
+            <option value="ISOLATED">{{ m('worldIsolated') }}</option>
+            <option value="MAIN">{{ m('worldMain') }}</option>
           </select>
         </label>
         <label>
-          Mode
+          {{ m('modeLabel') }}
           <select v-model="form.mode">
-            <option value="auto">auto</option>
-            <option value="persistent">persistent</option>
-            <option value="css">css</option>
-            <option value="once">once</option>
+            <option value="auto">{{ m('modeAuto') }}</option>
+            <option value="persistent">{{ m('modePersistent') }}</option>
+            <option value="css">{{ m('modeCss') }}</option>
+            <option value="once">{{ m('modeOnce') }}</option>
           </select>
         </label>
         <label>
-          All Frames
+          {{ m('allFramesLabel') }}
           <input type="checkbox" v-model="form.allFrames" />
         </label>
         <label>
-          Persist
+          {{ m('persistLabel') }}
           <input type="checkbox" v-model="form.persist" />
         </label>
         <label>
-          DNR Fallback
+          {{ m('dnrFallbackLabel') }}
           <input type="checkbox" v-model="form.dnrFallback" />
         </label>
       </div>
       <label>
-        Matches (comma-separated)
+        {{ m('matchesInputLabel') }}
         <input v-model="form.matches" placeholder="e.g. https://*.example.com/*" />
       </label>
       <label>
-        Excludes (comma-separated)
+        {{ m('excludesInputLabel') }}
         <input v-model="form.excludes" placeholder="optional" />
       </label>
       <label>
-        Tags (comma-separated)
+        {{ m('tagsInputLabel') }}
         <input v-model="form.tags" placeholder="optional" />
       </label>
       <label>
-        Script
+        {{ m('scriptLabel') }}
         <textarea v-model="form.script" placeholder="Paste JS/CSS/TM here" rows="8" />
       </label>
       <div class="row">
-        <button :disabled="submitting" @click="apply('auto')">Apply</button>
-        <button :disabled="submitting" @click="apply('once')">Run Once (CDP)</button>
+        <button :disabled="submitting" @click="apply('auto')">{{ m('applyButton') }}</button>
+        <button :disabled="submitting" @click="apply('once')">{{ m('runOnceButton') }}</button>
         <span class="hint" v-if="lastResult">{{ lastResult }}</span>
       </div>
     </section>
 
     <section class="filters">
-      <h2>List</h2>
+      <h2>{{ m('listSectionTitle') }}</h2>
       <div class="grid">
         <label>
-          Query
+          {{ m('queryLabel') }}
           <input v-model="filters.query" @input="reload()" />
         </label>
         <label>
-          Status
+          {{ m('statusLabel') }}
           <select v-model="filters.status" @change="reload()">
-            <option value="">all</option>
-            <option value="enabled">enabled</option>
-            <option value="disabled">disabled</option>
+            <option value="">{{ m('statusAll') }}</option>
+            <option value="enabled">{{ m('statusEnabled') }}</option>
+            <option value="disabled">{{ m('statusDisabled') }}</option>
           </select>
         </label>
         <label>
-          Domain
+          {{ m('domainLabel') }}
           <input v-model="filters.domain" @input="reload()" placeholder="example.com" />
         </label>
       </div>
       <div class="row">
-        <button @click="exportAll">Export All</button>
+        <button @click="exportAll">{{ m('exportAllButton') }}</button>
       </div>
       <table class="table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>World</th>
-            <th>RunAt</th>
-            <th>Updated</th>
+            <th>{{ m('tableHeaderName') }}</th>
+            <th>{{ m('statusLabel') }}</th>
+            <th>{{ m('tableHeaderWorld') }}</th>
+            <th>{{ m('tableHeaderRunAt') }}</th>
+            <th>{{ m('tableHeaderUpdated') }}</th>
             <th></th>
           </tr>
         </thead>
@@ -126,7 +126,7 @@
             <td>{{ it.runAt }}</td>
             <td>{{ formatTime(it.updatedAt) }}</td>
             <td class="actions">
-              <button @click="remove(it)">Delete</button>
+              <button @click="remove(it)">{{ m('deleteButton') }}</button>
             </td>
           </tr>
         </tbody>
@@ -287,6 +287,11 @@ onMounted(async () => {
   await loadEmergency();
   await reload();
 });
+
+function m(key: string, substitutions?: string | string[]) {
+  const msg = (globalThis.chrome?.i18n?.getMessage(key, substitutions as any) || '').trim();
+  return msg || key;
+}
 </script>
 
 <style scoped>
