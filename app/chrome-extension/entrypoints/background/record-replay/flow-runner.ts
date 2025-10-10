@@ -359,6 +359,17 @@ export async function runFlow(flow: Flow, options: RunOptions = {}): Promise<Run
               const resolvedBy = located?.resolvedBy || (located?.ref ? 'ref' : '');
               const fallbackUsed =
                 resolvedBy && first && resolvedBy !== 'ref' && resolvedBy !== first;
+              // minimal visibility check via resolveRef rect
+              if (located?.ref) {
+                const resolved = await chrome.tabs.sendMessage(tabId, {
+                  action: 'resolveRef',
+                  ref: located.ref,
+                } as any);
+                const rect = resolved?.rect;
+                if (!rect || rect.width <= 0 || rect.height <= 0) {
+                  throw new Error('element not visible');
+                }
+              }
               // auto scroll into view if possible (unified)
               try {
                 const sel = !located?.ref
@@ -419,6 +430,17 @@ export async function runFlow(flow: Flow, options: RunOptions = {}): Promise<Run
               const fallbackUsed =
                 resolvedBy && first && resolvedBy !== 'ref' && resolvedBy !== first;
               const value = resolveTemplate(s.value) ?? '';
+              // minimal visibility check via resolveRef rect
+              if (located?.ref) {
+                const resolved = await chrome.tabs.sendMessage(tabId, {
+                  action: 'resolveRef',
+                  ref: located.ref,
+                } as any);
+                const rect = resolved?.rect;
+                if (!rect || rect.width <= 0 || rect.height <= 0) {
+                  throw new Error('element not visible');
+                }
+              }
               // auto scroll into view if possible before fill
               try {
                 const sel = !located?.ref
