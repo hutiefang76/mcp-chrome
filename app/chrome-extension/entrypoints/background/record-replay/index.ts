@@ -16,6 +16,10 @@ import { runFlow } from './flow-runner';
 // design note: background listener for record & replay; manages start/stop and storage
 
 let currentRecording: { tabId: number; flow?: Flow } | null = null;
+// 最近一次点击信息（用于导航富化）
+let lastClickIdx: number | null = null;
+let lastClickTime = 0;
+let lastNavTaggedAt = 0;
 
 async function ensureRecorderInjected(tabId: number): Promise<void> {
   // Inject helper and recorder scripts
@@ -81,7 +85,17 @@ export function initRecordReplayListeners() {
           if (message.payload?.kind === 'start') {
             currentRecording.flow = message.payload.flow;
           } else if (message.payload?.kind === 'step') {
-            // background can enrich or validate steps if needed in future
+            // 记录最近一次 click/dblclick 的索引和时间，用于后续 tabs.onUpdated 导航富化
+            const step = message.payload.step as any;
+            if (step && (step.type === 'click' || step.type === 'dblclick')) {
+              try {
+                const idx = currentRecording.flow?.steps?.length ?? 0;
+                lastClickIdx = idx;
+                lastClickTime = Date.now();
+              } catch {
+                // ignore
+              }
+            }
           } else if (message.payload?.kind === 'stop') {
             currentRecording.flow = message.payload.flow || currentRecording.flow;
           }
@@ -181,5 +195,29 @@ export function initRecordReplayListeners() {
       sendResponse({ success: false, error: (err as any)?.message || String(err) });
     }
     return false;
+  });
+  // 监听 tab 更新，若点击后短时间发生导航则为该点击自动加上 after.waitForNavigation
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    try {
+      if (!currentRecording || tabId !== currentRecording.tabId) return;
+      if (!currentRecording.flow) return;
+      const urlChanged = typeof changeInfo.url === 'string';
+      const isLoading = changeInfo.status === 'loading';
+      if (!urlChanged && !isLoading) return;
+      if (lastClickIdx == null) return;
+      const now = Date.now();
+      if (now - lastClickTime > 5000) return; // 仅在最近5秒内的点击认为相关
+      if (now - lastNavTaggedAt < 500) return; // 去抖
+      const steps = currentRecording.flow.steps;
+      if (!Array.isArray(steps) || !steps[lastClickIdx]) return;
+      const st: any = steps[lastClickIdx];
+      if (!st.after) st.after = {};
+      if (!st.after.waitForNavigation) {
+        st.after.waitForNavigation = true;
+        lastNavTaggedAt = now;
+      }
+    } catch {
+      // ignore
+    }
   });
 }
