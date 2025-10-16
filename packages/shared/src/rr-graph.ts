@@ -56,6 +56,14 @@ export function mapNodeToStep(node: RRNode): any {
         target: c.target || { candidates: [] },
         value: c.value || '',
       };
+    case 'drag':
+      return {
+        ...base,
+        type: 'drag',
+        start: c.start || { candidates: [] },
+        end: c.end || { candidates: [] },
+        path: Array.isArray(c.path) ? c.path : undefined,
+      };
     case 'key':
       return { ...base, type: 'key', keys: c.keys || '' };
     case 'wait':
@@ -124,6 +132,14 @@ export function mapNodeToStep(node: RRNode): any {
         selector: c.selector || '',
         fullPage: !!c.fullPage,
         saveAs: c.saveAs || '',
+      };
+    case 'scroll':
+      return {
+        ...base,
+        type: 'scroll',
+        mode: c.mode || 'offset',
+        target: c.target || { candidates: [] },
+        offset: c.offset || { x: 0, y: 300 },
       };
     case 'triggerEvent':
       return {
@@ -267,6 +283,20 @@ export function mapStepToNodeConfig(s: any): any {
     };
   if (t === 'screenshot')
     return { ...base, selector: s.selector || '', fullPage: !!s.fullPage, saveAs: s.saveAs || '' };
+  if (t === 'scroll')
+    return {
+      ...base,
+      mode: s.mode || 'offset',
+      target: s.target || { candidates: [] },
+      offset: s.offset || { x: 0, y: 300 },
+    };
+  if (t === 'drag')
+    return {
+      ...base,
+      start: s.start || { candidates: [] },
+      end: s.end || { candidates: [] },
+      path: Array.isArray(s.path) ? s.path : [],
+    };
   if (t === 'triggerEvent')
     return {
       ...base,

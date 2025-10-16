@@ -1,7 +1,7 @@
 <template>
   <div class="form-section">
     <div class="section-header">
-      <span class="section-title">选择器</span>
+      <span class="section-title">{{ title || '选择器' }}</span>
       <button v-if="allowPick" class="btn-sm btn-primary" @click="pickFromPage">从页面选择</button>
     </div>
     <div class="selector-list" data-field="target.candidates">
@@ -27,19 +27,25 @@
 /* eslint-disable vue/no-mutating-props */
 import type { NodeBase } from '@/entrypoints/background/record-replay/types';
 
-const props = defineProps<{ node: NodeBase; allowPick?: boolean }>();
+const props = defineProps<{
+  node: NodeBase;
+  allowPick?: boolean;
+  targetKey?: string;
+  title?: string;
+}>();
+const key = (props.targetKey || 'target') as string;
 
 function ensureTarget() {
   const n: any = props.node;
   if (!n.config) n.config = {};
-  if (!n.config.target) n.config.target = { candidates: [] };
-  if (!Array.isArray(n.config.target.candidates)) n.config.target.candidates = [];
+  if (!n.config[key]) n.config[key] = { candidates: [] };
+  if (!Array.isArray(n.config[key].candidates)) n.config[key].candidates = [];
 }
 
 const list = {
   get value() {
     ensureTarget();
-    return ((props.node as any).config.target.candidates || []) as Array<{
+    return ((props.node as any).config[key].candidates || []) as Array<{
       type: string;
       value: string;
     }>;
@@ -48,15 +54,15 @@ const list = {
 
 function add() {
   ensureTarget();
-  (props.node as any).config.target.candidates.push({ type: 'css', value: '' });
+  (props.node as any).config[key].candidates.push({ type: 'css', value: '' });
 }
 function remove(i: number) {
   ensureTarget();
-  (props.node as any).config.target.candidates.splice(i, 1);
+  (props.node as any).config[key].candidates.splice(i, 1);
 }
 function move(i: number, d: number) {
   ensureTarget();
-  const arr = (props.node as any).config.target.candidates as any[];
+  const arr = (props.node as any).config[key].candidates as any[];
   const j = i + d;
   if (j < 0 || j >= arr.length) return;
   const t = arr[i];
@@ -101,7 +107,7 @@ async function pickFromPage() {
         merged.push({ type: String(c.type), value: String(c.value) });
       }
     }
-    n.config.target.candidates = merged;
+    n.config[key].candidates = merged;
   } catch (e) {
     console.warn('pickFromPage failed:', e);
   }

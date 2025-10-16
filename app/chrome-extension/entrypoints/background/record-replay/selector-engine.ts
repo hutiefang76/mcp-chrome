@@ -17,25 +17,8 @@ export async function locateElement(
   target: TargetLocator,
   frameId?: number,
 ): Promise<LocatedElement | null> {
-  // Try ref first
-  if (target.ref) {
-    try {
-      const res = await chrome.tabs.sendMessage(
-        tabId,
-        {
-          action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
-          ref: target.ref,
-        } as any,
-        { frameId } as any,
-      );
-      if (res && res.success && res.center) {
-        return { ref: target.ref, center: res.center, resolvedBy: 'ref' };
-      }
-    } catch (e) {
-      // ignore and fallback
-    }
-  }
-  // Try candidates in order
+  // Prefer stable selectors (css/attr/aria/text/xpath); only use ref as a last resort.
+  // Rationale: ref is ephemeral across navigations/renders and should not be prioritized in replay.
   for (const c of target.candidates || []) {
     try {
       if (c.type === 'css' || c.type === 'attr') {
@@ -124,6 +107,24 @@ export async function locateElement(
       }
     } catch (e) {
       // continue to next candidate
+    }
+  }
+  // Fallback: try ref (works when ref was produced in the same page lifecycle)
+  if (target.ref) {
+    try {
+      const res = await chrome.tabs.sendMessage(
+        tabId,
+        {
+          action: TOOL_MESSAGE_TYPES.RESOLVE_REF,
+          ref: target.ref,
+        } as any,
+        { frameId } as any,
+      );
+      if (res && res.success && res.center) {
+        return { ref: target.ref, center: res.center, resolvedBy: 'ref' };
+      }
+    } catch (e) {
+      // ignore
     }
   }
   return null;

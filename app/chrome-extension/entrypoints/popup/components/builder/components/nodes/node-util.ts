@@ -24,6 +24,8 @@ import ILucideBell from '~icons/lucide/bell';
 import ILucideWrench from '~icons/lucide/wrench';
 import ILucideFrame from '~icons/lucide/frame';
 import ILucideDownload from '~icons/lucide/download';
+import ILucideArrowUpDown from '~icons/lucide/arrow-up-down';
+import ILucideMoveVertical from '~icons/lucide/move-vertical';
 
 export function iconComp(t?: string) {
   switch (t) {
@@ -34,6 +36,10 @@ export function iconComp(t?: string) {
       return ILucideMousePointerClick;
     case 'fill':
       return ILucideEdit3;
+    case 'drag':
+      return ILucideArrowUpDown;
+    case 'scroll':
+      return ILucideMoveVertical;
     case 'key':
       return ILucideKeyboard;
     case 'navigate':
@@ -93,11 +99,13 @@ export function getTypeLabel(type?: string) {
     foreach: '循环',
     assert: '断言',
     key: '键盘',
+    drag: '拖拽',
     dblclick: '双击',
     openTab: '打开标签',
     switchTab: '切换标签',
     closeTab: '关闭标签',
     delay: '延迟',
+    scroll: '滚动',
     while: '循环',
   };
   return labels[String(type || '')] || type || '';

@@ -49,16 +49,33 @@ export async function runFlow(flow: Flow, options: RunOptions = {}): Promise<Run
   for (const v of flow.variables || []) if (v.default !== undefined) vars[v.key] = v.default;
   if (options.args) Object.assign(vars, options.args);
 
-  // ensure tab per options
-  await ensureTab({
+  // Derive a default startUrl when not provided: prefer first navigate step
+  let derivedStartUrl: string | undefined = undefined;
+  try {
+    // We haven't computed stepsToRun yet; compute minimal set from flow for derive
+    const hasDag0 = Array.isArray((flow as any).nodes) && (flow as any).nodes.length > 0;
+    const nodes0 = hasDag0 ? (((flow as any).nodes || []) as any[]) : [];
+    const edges0 = hasDag0 ? (((flow as any).edges || []) as any[]) : [];
+    const defaultEdges0 = hasDag0 ? defaultEdgesOnly(edges0 as any) : [];
+    const order0 = hasDag0 ? topoOrder(nodes0 as any, defaultEdges0 as any) : [];
+    const steps0: Step[] = hasDag0
+      ? order0.map((n) => mapDagNodeToStep(n as any))
+      : ((flow.steps || []) as Step[]);
+    const nav = steps0.find((s: any) => s && (s as any).type === 'navigate') as any;
+    if (nav && typeof nav.url === 'string') derivedStartUrl = expandTemplatesDeep(nav.url, {});
+  } catch {}
+  const ensured = await ensureTab({
     tabTarget: options.tabTarget,
-    startUrl: options.startUrl,
+    startUrl: options.startUrl || derivedStartUrl,
     refresh: options.refresh,
   });
 
-  // pre-load read_page to init bridges
+  // pre-load read_page to init bridges only when on a web page (avoid builder.html)
   try {
-    await handleCallTool({ name: TOOL_NAMES.BROWSER.READ_PAGE, args: {} });
+    const u = ensured?.url || '';
+    if (/^(https?:|file:)/i.test(u)) {
+      await handleCallTool({ name: TOOL_NAMES.BROWSER.READ_PAGE, args: {} });
+    }
   } catch {}
 
   // collect required variables via overlay prompt
@@ -267,6 +284,12 @@ export async function runFlow(flow: Flow, options: RunOptions = {}): Promise<Run
             else if (after.waitForNetworkIdle)
               await waitForNetworkIdle(Math.min((step as any).timeoutMs || 5000, 120000), 1200);
           }
+          if (step.type === 'navigate' || step.type === 'openTab') {
+            await waitForNavigationDone(beforeInfo.url, (step as any).timeoutMs);
+            await ensureReadPageIfWeb();
+          } else if (step.type === 'switchTab') {
+            await ensureReadPageIfWeb();
+          }
           if (!result?.alreadyLogged)
             logs.push({ stepId: step.id, status: 'success', tookMs: Date.now() - t0 });
           await appendOverlay(`✔ ${step.type} (${step.id})`);
@@ -309,6 +332,16 @@ export async function runFlow(flow: Flow, options: RunOptions = {}): Promise<Run
   const waitForNavigationDone = async (prevUrl: string, timeoutMs?: number) => {
     await waitForNavigation(timeoutMs, prevUrl);
   };
+  const isWebUrl = (u?: string | null) => !!u && /^(https?:|file:)/i.test(String(u || ''));
+  const ensureReadPageIfWeb = async () => {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const url = tabs?.[0]?.url || '';
+      if (isWebUrl(url)) {
+        await handleCallTool({ name: TOOL_NAMES.BROWSER.READ_PAGE, args: {} });
+      }
+    } catch {}
+  };
 
   try {
     if (!hasDag) {
@@ -345,6 +378,12 @@ export async function runFlow(flow: Flow, options: RunOptions = {}): Promise<Run
                 await waitForNavigationDone(beforeInfo.url, (step as any).timeoutMs);
               else if (after.waitForNetworkIdle)
                 await waitForNetworkIdle(Math.min((step as any).timeoutMs || 5000, 120000), 1200);
+            }
+            if (step.type === 'navigate' || step.type === 'openTab') {
+              await waitForNavigationDone(beforeInfo.url, (step as any).timeoutMs);
+              await ensureReadPageIfWeb();
+            } else if (step.type === 'switchTab') {
+              await ensureReadPageIfWeb();
             }
             if (!result?.alreadyLogged) {
               logs.push({ stepId: step.id, status: 'success', tookMs: Date.now() - t0 });
@@ -476,6 +515,12 @@ export async function runFlow(flow: Flow, options: RunOptions = {}): Promise<Run
               await waitForNavigationDone(beforeInfo.url, (step as any).timeoutMs);
             else if (after.waitForNetworkIdle)
               await waitForNetworkIdle(Math.min((step as any).timeoutMs || 5000, 120000), 1200);
+          }
+          if (step.type === 'navigate' || step.type === 'openTab') {
+            await waitForNavigationDone(beforeInfo.url, (step as any).timeoutMs);
+            await ensureReadPageIfWeb();
+          } else if (step.type === 'switchTab') {
+            await ensureReadPageIfWeb();
           }
           if (!result?.alreadyLogged)
             logs.push({ stepId: step.id, status: 'success', tookMs: Date.now() - t0 });

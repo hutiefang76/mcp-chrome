@@ -1377,11 +1377,28 @@ onMounted(async () => {
 
   await checkSemanticEngineStatus();
   setupServerStatusListener();
+  // Auto-refresh workflows list when storage rr_flows changes
+  try {
+    const onChanged = (changes: any, area: string) => {
+      try {
+        if (area !== 'local') return;
+        if (Object.prototype.hasOwnProperty.call(changes || {}, 'rr_flows')) loadFlows();
+      } catch {}
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    (window as any).__rr_popup_onChanged = onChanged;
+  } catch {}
 });
 
 onUnmounted(() => {
   stopModelStatusMonitoring();
   stopSemanticEngineStatusPolling();
+  try {
+    const fn = (window as any).__rr_popup_onChanged;
+    if (fn && chrome?.storage?.onChanged?.removeListener) {
+      chrome.storage.onChanged.removeListener(fn);
+    }
+  } catch {}
 });
 </script>
 

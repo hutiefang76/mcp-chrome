@@ -15,6 +15,8 @@ import PropClick from '@/entrypoints/popup/components/builder/components/propert
 import PropFill from '@/entrypoints/popup/components/builder/components/properties/PropertyFill.vue';
 import PropTriggerEvent from '@/entrypoints/popup/components/builder/components/properties/PropertyTriggerEvent.vue';
 import PropSetAttribute from '@/entrypoints/popup/components/builder/components/properties/PropertySetAttribute.vue';
+import PropDrag from '@/entrypoints/popup/components/builder/components/properties/PropertyDrag.vue';
+import PropScroll from '@/entrypoints/popup/components/builder/components/properties/PropertyScroll.vue';
 import PropNavigate from '@/entrypoints/popup/components/builder/components/properties/PropertyNavigate.vue';
 import PropWait from '@/entrypoints/popup/components/builder/components/properties/PropertyWait.vue';
 import PropAssert from '@/entrypoints/popup/components/builder/components/properties/PropertyAssert.vue';
@@ -101,6 +103,22 @@ export const NODE_UI_LIST: NodeUIConfig[] = [
     iconClass: 'icon-click',
     canvas: baseCard,
     property: PropClick,
+  },
+  {
+    type: 'drag',
+    label: '拖拽',
+    category: 'Actions',
+    iconClass: 'icon-drag',
+    canvas: baseCard,
+    property: PropDrag,
+  },
+  {
+    type: 'scroll',
+    label: '滚动',
+    category: 'Actions',
+    iconClass: 'icon-scroll',
+    canvas: baseCard,
+    property: PropScroll,
   },
   {
     type: 'dblclick',

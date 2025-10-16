@@ -28,6 +28,9 @@ export function defaultConfigFor(t: NodeType): any {
   if (t === 'http') return { method: 'GET', url: '', headers: {}, body: null, saveAs: '' };
   if (t === 'extract') return { selector: '', attr: 'text', js: '', saveAs: '' };
   if (t === 'screenshot') return { selector: '', fullPage: false, saveAs: 'shot' };
+  if (t === 'drag') return { start: { candidates: [] }, end: { candidates: [] }, path: [] };
+  if (t === 'scroll')
+    return { mode: 'offset', offset: { x: 0, y: 300 }, target: { candidates: [] } };
   if (t === 'triggerEvent')
     return { target: { candidates: [] }, event: 'input', bubbles: true, cancelable: false };
   if (t === 'setAttribute') return { target: { candidates: [] }, name: '', value: '' };
@@ -108,6 +111,21 @@ export function summarizeNode(n?: NodeBase | null): string {
     return `if/else 分支数 ${cnt}${n.config?.else === false ? '' : ' + else'}`;
   }
   if (n.type === 'script') return (n.config?.code || '').slice(0, 30);
+  if (n.type === 'drag') {
+    const a = n.config?.start?.candidates?.[0]?.value || '';
+    const b = n.config?.end?.candidates?.[0]?.value || '';
+    return a || b ? `${a} -> ${b}` : '拖拽';
+  }
+  if (n.type === 'scroll') {
+    const mode = n.config?.mode || 'offset';
+    if (mode === 'offset' || mode === 'container') {
+      const x = Number(n.config?.offset?.x ?? 0);
+      const y = Number(n.config?.offset?.y ?? 0);
+      return `${mode} (${x}, ${y})`;
+    }
+    const sel = n.config?.target?.candidates?.[0]?.value || '';
+    return sel ? `element ${sel}` : 'element';
+  }
   if (n.type === 'executeFlow') return `exec ${n.config?.flowId || ''}`;
   return '';
 }

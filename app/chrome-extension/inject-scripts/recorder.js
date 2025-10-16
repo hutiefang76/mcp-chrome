@@ -7,13 +7,17 @@
   window.__RR_RECORDER_INSTALLED__ = true;
 
   const SENSITIVE_INPUT_TYPES = new Set(['password']);
-  const THROTTLE_SCROLL_MS = 200;
+  const THROTTLE_SCROLL_MS = 200; // legacy (kept for safety)
+  const SCROLL_DEBOUNCE_MS = 350; // record on scroll end; update last step during scroll
   const sampledDrag = [];
 
   let isRecording = false;
+  // Persistent guard synced with background to prevent stray resume after stop/refresh
+  let allowedByPersistentState = false;
   let isPaused = false;
   let hideInputValues = false;
   let highlightBox = null;
+  let highlightEnabled = true;
   let pendingFlow = {
     id: `flow_${Date.now()}`,
     name: '未命名录制',
@@ -22,6 +26,76 @@
     variables: [],
     meta: { createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
   };
+
+  // Debounce and coalesce state for input recording
+  // Avoid generating one fill step per keystroke; update recent step instead
+  const INPUT_DEBOUNCE_MS = 500;
+  let lastFill = {
+    ref: null,
+    idx: -1,
+    ts: 0,
+  };
+
+  // Initialize persistent recording state from storage and keep it in sync
+  try {
+    chrome.storage.local
+      .get(['rr_recording_state'])
+      .then((res) => {
+        try {
+          allowedByPersistentState = !!(
+            res &&
+            res.rr_recording_state &&
+            res.rr_recording_state.active
+          );
+          // If state is inactive but a stray overlay is present, force remove
+          if (
+            !allowedByPersistentState &&
+            (document.getElementById('__rr_rec_overlay') || isRecording)
+          ) {
+            isRecording = false;
+            detach();
+            removeOverlay();
+          }
+        } catch {}
+      })
+      .catch(() => {});
+    chrome.storage.onChanged.addListener((changes, area) => {
+      try {
+        if (area !== 'local') return;
+        if (Object.prototype.hasOwnProperty.call(changes || {}, 'rr_recording_state')) {
+          const nv = changes.rr_recording_state?.newValue;
+          const active = !!(nv && nv.active);
+          allowedByPersistentState = active;
+          if (!active && (document.getElementById('__rr_rec_overlay') || isRecording)) {
+            // Force stop any stray recorder UI and listeners
+            isRecording = false;
+            detach();
+            removeOverlay();
+            try {
+              if (scrollTimer) clearTimeout(scrollTimer);
+            } catch {}
+            scrollTimer = null;
+            lastScrollIdx = -1;
+            if (hoverRAF) {
+              try {
+                cancelAnimationFrame(hoverRAF);
+              } catch {}
+              hoverRAF = 0;
+            }
+            if (batchTimer) {
+              try {
+                clearTimeout(batchTimer);
+              } catch {}
+              batchTimer = null;
+              batch.length = 0;
+            }
+            sampledDrag.length = 0;
+            lastFill = { ref: null, idx: -1, ts: 0 };
+          }
+        }
+      } catch {}
+    });
+  } catch {}
 
   function now() {
     return Date.now();
@@ -122,20 +196,45 @@
     pendingFlow.variables.push({ key, sensitive: !!sensitive, default: defaultValue || '' });
   }
 
+  // batch send steps to reduce message overhead
+  let batch = [];
+  let batchTimer = null;
+  function flushBatch() {
+    if (!batch.length) return;
+    const steps = batch.slice();
+    batch.length = 0;
+    try {
+      chrome.runtime.sendMessage({
+        type: 'rr_recorder_event',
+        payload: { kind: 'steps', steps },
+      });
+    } catch {}
+  }
   function pushStep(step) {
     step.id = step.id || `step_${now()}_${Math.random().toString(36).slice(2, 6)}`;
     pendingFlow.steps.push(step);
+    batch.push(step);
     pendingFlow.meta.updatedAt = new Date().toISOString();
-    chrome.runtime.sendMessage({
-      type: 'rr_recorder_event',
-      payload: { kind: 'step', step },
-    });
+    if (batchTimer) {
+      try {
+        clearTimeout(batchTimer);
+      } catch {}
+    }
+    batchTimer = setTimeout(() => {
+      batchTimer = null;
+      flushBatch();
+    }, 80);
   }
 
   function onClick(e) {
     if (!isRecording || isPaused) return;
     const el = e.target instanceof Element ? e.target : null;
     if (!el) return;
+    // Ignore clicks inside our own overlay UI
+    try {
+      const overlay = document.getElementById('__rr_rec_overlay');
+      if (overlay && (el === overlay || (el.closest && el.closest('#__rr_rec_overlay')))) return;
+    } catch {}
     try {
       // Special-case: clicking on <a target="_blank"> should record as openTab + switchTab
       const a = el.closest && el.closest('a[href]');
@@ -178,21 +277,58 @@
       addVariable(varKey, true, '');
       value = `{${varKey}}`;
     }
+    const nowTs = now();
+    // If recent fill for the same element within debounce window, update it instead of pushing
+    const sameRef = lastFill.ref && target && target.ref && lastFill.ref === target.ref;
+    const withinDebounce = nowTs - lastFill.ts <= INPUT_DEBOUNCE_MS;
+    if (sameRef && withinDebounce && lastFill.idx >= 0) {
+      try {
+        const st = pendingFlow.steps[lastFill.idx];
+        if (st && st.type === 'fill') {
+          st.value = value;
+          pendingFlow.meta.updatedAt = new Date().toISOString();
+          lastFill.ts = nowTs;
+          return;
+        }
+      } catch {}
+    }
     pushStep({ type: 'fill', target, value, screenshotOnFail: true });
+    lastFill = {
+      ref: target && target.ref ? target.ref : null,
+      idx: pendingFlow.steps.length - 1,
+      ts: nowTs,
+    };
   }
 
   function onKeydown(e) {
     if (!isRecording || isPaused) return;
-    // modifier+key or Enter/Backspace etc
+    // Only record special keys or chords. Ignore plain character typing (handled by fill).
     const mods = [];
     if (e.ctrlKey) mods.push('ctrl');
     if (e.metaKey) mods.push('cmd');
     if (e.altKey) mods.push('alt');
     if (e.shiftKey) mods.push('shift');
-    let keyToken = e.key || '';
-    // normalize
-    keyToken = keyToken.length === 1 ? keyToken.toLowerCase() : keyToken.toLowerCase();
-    const keys = mods.length ? `${mods.join('+')}+${keyToken}` : keyToken;
+    const key = (e.key || '').toLowerCase();
+    const specialKeys = new Set([
+      'enter',
+      'escape',
+      'esc',
+      'tab',
+      'backspace',
+      'delete',
+      'home',
+      'end',
+      'pageup',
+      'pagedown',
+      'arrowleft',
+      'arrowright',
+      'arrowup',
+      'arrowdown',
+    ]);
+    const isPlainChar = key.length === 1 && mods.length === 0;
+    const shouldRecord = mods.length > 0 || specialKeys.has(key);
+    if (!shouldRecord || isPlainChar) return;
+    const keys = mods.length ? `${mods.join('+')}+${key}` : key;
     pushStep({ type: 'key', keys, screenshotOnFail: false });
   }
 
@@ -221,15 +357,37 @@
   }
 
   let lastScrollAt = 0;
+  let scrollTimer = null;
+  let lastScrollIdx = -1;
   function onScroll(e) {
     if (!isRecording || isPaused) return;
     const nowTs = now();
-    if (nowTs - lastScrollAt < THROTTLE_SCROLL_MS) return;
+    // Soft throttle
+    if (nowTs - lastScrollAt < Math.min(THROTTLE_SCROLL_MS, 100)) return;
     lastScrollAt = nowTs;
-    const targetEl = e.target === document ? document.documentElement : e.target;
-    const target = targetEl instanceof Element ? buildTarget(targetEl) : undefined;
     const top = window.scrollY || document.documentElement.scrollTop || 0;
-    pushStep({ type: 'scroll', mode: 'offset', offset: { x: 0, y: top }, target });
+    try {
+      if (lastScrollIdx >= 0 && pendingFlow.steps[lastScrollIdx]) {
+        const st = pendingFlow.steps[lastScrollIdx];
+        if (st && st.type === 'scroll' && st.mode === 'offset') {
+          st.offset = { x: 0, y: top };
+          pendingFlow.meta.updatedAt = new Date().toISOString();
+        }
+      } else {
+        // Reduce overhead: do not build element target for generic window scroll
+        pushStep({ type: 'scroll', mode: 'offset', offset: { x: 0, y: top } });
+        lastScrollIdx = pendingFlow.steps.length - 1;
+      }
+    } catch {}
+    if (scrollTimer) {
+      try {
+        clearTimeout(scrollTimer);
+      } catch {}
+    }
+    scrollTimer = setTimeout(() => {
+      lastScrollIdx = -1;
+      scrollTimer = null;
+    }, SCROLL_DEBOUNCE_MS);
   }
 
   let dragging = false;
@@ -242,9 +400,10 @@
   function onMouseMove(e) {
     if (!isRecording) return;
     if (!dragging) return;
-    if (sampledDrag.length === 0 || now() - sampledDrag._lastTs > 50) {
+    if (sampledDrag.length === 0 || now() - sampledDrag._lastTs > 100) {
       sampledDrag.push({ x: e.clientX, y: e.clientY });
       sampledDrag._lastTs = now();
+      if (sampledDrag.length > 30) sampledDrag.splice(1, sampledDrag.length - 30);
     }
   }
   function onMouseUp(e) {
@@ -285,7 +444,9 @@
     // document.removeEventListener('keyup', onKeyup, true);
     document.removeEventListener('compositionstart', onCompositionStart, true);
     document.removeEventListener('compositionend', onCompositionEnd, true);
-    window.removeEventListener('scroll', onScroll, { passive: true });
+    try {
+      window.removeEventListener('scroll', onScroll, false);
+    } catch {}
     document.removeEventListener('mousedown', onMouseDown, true);
     document.removeEventListener('mousemove', onMouseMove, true);
     document.removeEventListener('mouseup', onMouseUp, true);
@@ -317,17 +478,57 @@
       type: 'rr_recorder_event',
       payload: { kind: 'start', flow: pendingFlow },
     });
+    try {
+      // Record current page URL as the first step when starting from an existing page
+      // Only add once from the top frame and only when this is a fresh flow
+      if (
+        window === window.top &&
+        Array.isArray(pendingFlow.steps) &&
+        pendingFlow.steps.length === 0
+      ) {
+        const href = String(location && location.href ? location.href : '');
+        if (href) pushStep({ type: 'navigate', url: href });
+      }
+    } catch (_e) {
+      /* ignore */
+    }
   }
 
   function stop() {
     isRecording = false;
     detach();
     removeOverlay();
+    // Clear timers and transient states to avoid post-stop overhead
+    try {
+      if (scrollTimer) clearTimeout(scrollTimer);
+    } catch {}
+    scrollTimer = null;
+    lastScrollIdx = -1;
+    if (hoverRAF) {
+      try {
+        cancelAnimationFrame(hoverRAF);
+      } catch {}
+      hoverRAF = 0;
+    }
+    if (batchTimer) {
+      try {
+        clearTimeout(batchTimer);
+      } catch {}
+      batchTimer = null;
+      batch.length = 0;
+    }
+    sampledDrag.length = 0;
+    lastFill = { ref: null, idx: -1, ts: 0 };
     chrome.runtime.sendMessage({
       type: 'rr_recorder_event',
       payload: { kind: 'stop', flow: pendingFlow },
     });
-    return pendingFlow;
+    // Release references to steps to reduce memory pressure after stop
+    const ret = pendingFlow;
+    try {
+      pendingFlow.steps = [];
+    } catch {}
+    return ret;
   }
 
   function pause() {
@@ -336,6 +537,8 @@
   }
 
   function resume() {
+    // Only resume when background indicates an active recording session
+    if (!allowedByPersistentState) return;
     isRecording = true;
     isPaused = false;
     attach();
@@ -344,6 +547,8 @@
   }
 
   function ensureOverlay() {
+    // Only render overlay and highlight in top frame to reduce multi-frame overhead
+    if (window !== window.top) return;
     let root = document.getElementById('__rr_rec_overlay');
     if (root) return;
     root = document.createElement('div');
@@ -361,6 +566,9 @@
         <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px;">
           <input id="__rr_hide_values" type="checkbox" style="vertical-align:middle;" />隐藏输入值
         </label>
+        <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px;">
+          <input id="__rr_enable_highlight" type="checkbox" style="vertical-align:middle;" />高亮
+        </label>
         <button id="__rr_pause" style="background:#fff; color:#111; border:none; border-radius:6px; padding:4px 8px; cursor:pointer;">暂停</button>
         <button id="__rr_stop" style="background:#111; color:#fff; border:none; border-radius:6px; padding:4px 8px; cursor:pointer;">停止</button>
       </div>
@@ -369,8 +577,17 @@
     const btnPause = root.querySelector('#__rr_pause');
     const btnStop = root.querySelector('#__rr_stop');
     const hideChk = root.querySelector('#__rr_hide_values');
+    const highlightChk = root.querySelector('#__rr_enable_highlight');
     hideChk.checked = hideInputValues;
     hideChk.addEventListener('change', () => (hideInputValues = hideChk.checked));
+    highlightChk.checked = highlightEnabled;
+    highlightChk.addEventListener('change', () => {
+      highlightEnabled = !!highlightChk.checked;
+      try {
+        if (highlightEnabled) document.addEventListener('mousemove', onHoverMove, true);
+        else document.removeEventListener('mousemove', onHoverMove, true);
+      } catch {}
+    });
     btnPause.addEventListener('click', () => {
       if (!isPaused) pause();
       else resume();
@@ -390,15 +607,17 @@
       zIndex: 2147483645,
     });
     document.documentElement.appendChild(highlightBox);
-    document.addEventListener('mousemove', onHoverMove, true);
+    if (highlightEnabled) document.addEventListener('mousemove', onHoverMove, true);
   }
 
   function removeOverlay() {
     try {
-      const root = document.getElementById('__rr_rec_overlay');
-      if (root) root.remove();
-      if (highlightBox) highlightBox.remove();
-      document.removeEventListener('mousemove', onHoverMove, true);
+      if (window === window.top) {
+        const root = document.getElementById('__rr_rec_overlay');
+        if (root) root.remove();
+        if (highlightBox) highlightBox.remove();
+        document.removeEventListener('mousemove', onHoverMove, true);
+      }
     } catch {}
   }
 
@@ -409,20 +628,25 @@
     if (pauseBtn) pauseBtn.textContent = isPaused ? '继续' : '暂停';
   }
 
+  let hoverRAF = 0;
   function onHoverMove(e) {
     if (!highlightBox || !isRecording || isPaused) return;
+    if (hoverRAF) return;
     const el = e.target instanceof Element ? e.target : null;
     if (!el) return;
-    try {
-      const r = el.getBoundingClientRect();
-      Object.assign(highlightBox.style, {
-        left: `${Math.round(r.left)}px`,
-        top: `${Math.round(r.top)}px`,
-        width: `${Math.round(Math.max(0, r.width))}px`,
-        height: `${Math.round(Math.max(0, r.height))}px`,
-        display: r.width > 0 && r.height > 0 ? 'block' : 'none',
-      });
-    } catch {}
+    hoverRAF = requestAnimationFrame(() => {
+      try {
+        const r = el.getBoundingClientRect();
+        Object.assign(highlightBox.style, {
+          left: `${Math.round(r.left)}px`,
+          top: `${Math.round(r.top)}px`,
+          width: `${Math.round(Math.max(0, r.width))}px`,
+          height: `${Math.round(Math.max(0, r.height))}px`,
+          display: r.width > 0 && r.height > 0 ? 'block' : 'none',
+        });
+      } catch {}
+      hoverRAF = 0;
+    });
   }
 
   chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {

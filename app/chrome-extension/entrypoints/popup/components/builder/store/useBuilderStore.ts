@@ -27,6 +27,8 @@ export function useBuilderStore(initial?: FlowV2 | null) {
   const paletteTypes = [
     'trigger',
     'click',
+    'drag',
+    'scroll',
     'fill',
     'if',
     'foreach',

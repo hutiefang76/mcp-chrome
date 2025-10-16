@@ -410,6 +410,12 @@ defineExpose({ zoomIn, zoomOut, fitAll });
 :deep(.icon-dblclick) {
   background: #fe5196;
 }
+:deep(.icon-drag) {
+  background: #f97316;
+}
+:deep(.icon-scroll) {
+  background: #0ea5e9;
+}
 :deep(.icon-openTab),
 :deep(.icon-switchTab),
 :deep(.icon-closeTab) {

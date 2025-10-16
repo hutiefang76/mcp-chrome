@@ -56,21 +56,46 @@ export async function ensureTab(options: {
   tabTarget?: 'current' | 'new';
   startUrl?: string;
   refresh?: boolean;
-}) {
+}): Promise<{ tabId: number; url?: string }> {
   const target = options.tabTarget || 'current';
   const startUrl = options.startUrl;
-  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const isWebUrl = (u?: string | null) => !!u && /^(https?:|file:)/i.test(u);
+
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  const [active] = tabs.filter((t) => t.active);
+
   if (target === 'new') {
     let urlToOpen = startUrl;
-    if (!urlToOpen) urlToOpen = active?.url || 'about:blank';
-    await chrome.tabs.create({ url: urlToOpen, active: true });
-    await new Promise((r) => setTimeout(r, 500));
-  } else {
-    if (startUrl)
-      await handleCallTool({ name: TOOL_NAMES.BROWSER.NAVIGATE, args: { url: startUrl } });
-    else if (options.refresh)
+    if (!urlToOpen) urlToOpen = isWebUrl(active?.url) ? active!.url! : 'about:blank';
+    const created = await chrome.tabs.create({ url: urlToOpen, active: true });
+    await new Promise((r) => setTimeout(r, 300));
+    return { tabId: created.id!, url: created.url };
+  }
+
+  // current tab target
+  if (startUrl) {
+    await handleCallTool({ name: TOOL_NAMES.BROWSER.NAVIGATE, args: { url: startUrl } });
+  } else if (options.refresh) {
+    // only refresh if current tab is a web page
+    if (isWebUrl(active?.url))
       await handleCallTool({ name: TOOL_NAMES.BROWSER.NAVIGATE, args: { refresh: true } });
   }
+
+  // Re-evaluate active after potential navigation
+  const cur = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  let tabId = cur?.id;
+  let url = cur?.url;
+
+  // If still on extension/internal page and no startUrl, try switch to an existing web tab
+  if (!isWebUrl(url) && !startUrl) {
+    const candidate = tabs.find((t) => isWebUrl(t.url));
+    if (candidate?.id) {
+      await chrome.tabs.update(candidate.id, { active: true });
+      tabId = candidate.id;
+      url = candidate.url;
+    }
+  }
+  return { tabId: tabId!, url };
 }
 
 export async function waitForNetworkIdle(totalTimeoutMs: number, idleThresholdMs: number) {

@@ -97,17 +97,57 @@ async function rescheduleAlarms() {
 }
 
 async function ensureRecorderInjected(tabId: number): Promise<void> {
-  // Inject helper and recorder scripts into all frames to aggregate same-origin iframes
-  await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    files: ['inject-scripts/accessibility-tree-helper.js'],
-    world: 'ISOLATED',
-  } as any);
-  await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    files: ['inject-scripts/recorder.js'],
-    world: 'ISOLATED',
-  } as any);
+  // Determine frames and selectively inject only where missing to minimize overhead.
+  let frames: Array<{ frameId: number } & Record<string, any>> = [];
+  try {
+    frames = await chrome.webNavigation.getAllFrames({ tabId });
+  } catch {}
+  if (!Array.isArray(frames) || frames.length === 0) frames = [{ frameId: 0 } as any];
+
+  const needHelper: number[] = [];
+  const needRecorder: number[] = [];
+  await Promise.all(
+    frames.map(async (f) => {
+      const frameId = (f as any).frameId ?? 0;
+      // ping helper
+      try {
+        const res = await chrome.tabs.sendMessage(
+          tabId,
+          { action: 'chrome_read_page_ping' } as any,
+          { frameId } as any,
+        );
+        if (!res) needHelper.push(frameId);
+      } catch {
+        needHelper.push(frameId);
+      }
+      // ping recorder
+      try {
+        const res = await chrome.tabs.sendMessage(
+          tabId,
+          { action: 'rr_recorder_ping' } as any,
+          { frameId } as any,
+        );
+        if (!res) needRecorder.push(frameId);
+      } catch {
+        needRecorder.push(frameId);
+      }
+    }),
+  );
+
+  if (needHelper.length > 0) {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: needHelper },
+      files: ['inject-scripts/accessibility-tree-helper.js'],
+      world: 'ISOLATED',
+    } as any);
+  }
+  if (needRecorder.length > 0) {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: needRecorder },
+      files: ['inject-scripts/recorder.js'],
+      world: 'ISOLATED',
+    } as any);
+  }
 }
 
 async function broadcastRecorderCommandToAllTabs(cmd: 'start' | 'stop' | 'resume' | 'pause') {
@@ -286,42 +326,46 @@ export function initRecordReplayListeners() {
               }
             } catch {}
           }
-        } else if (message.payload?.kind === 'step') {
+        } else if (message.payload?.kind === 'step' || message.payload?.kind === 'steps') {
           // Guard: only aggregate when an active recording session is ongoing
           if (currentRecording && recordingActive) {
-            // 记录最近一次 click/dblclick 的索引和时间，用于后续 tabs.onUpdated 导航富化
-            const step = message.payload.step as any;
-            if (step && (step.type === 'click' || step.type === 'dblclick')) {
+            const stepsArr: any[] = Array.isArray(message.payload.steps)
+              ? message.payload.steps
+              : [message.payload.step];
+            for (const step of stepsArr) {
+              // 记录最近一次 click/dblclick 的索引和时间，用于后续 tabs.onUpdated 导航富化
+              if (step && (step.type === 'click' || step.type === 'dblclick')) {
+                try {
+                  const idx = currentRecording.flow?.steps?.length ?? 0;
+                  lastClickIdx = idx;
+                  lastClickTime = Date.now();
+                } catch {
+                  // ignore
+                }
+              }
+              // 统一在后台累积步骤，便于跨标签页聚合
               try {
-                const idx = currentRecording.flow?.steps?.length ?? 0;
-                lastClickIdx = idx;
-                lastClickTime = Date.now();
+                if (!currentRecording.flow) {
+                  currentRecording.flow = {
+                    id: `flow_${Date.now()}`,
+                    name: '未命名录制',
+                    version: 1,
+                    steps: [],
+                    variables: [],
+                    meta: {
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                    },
+                  } as Flow;
+                }
+                currentRecording.flow.steps.push(step);
+                currentRecording.flow.meta = {
+                  ...(currentRecording.flow.meta || ({} as any)),
+                  updatedAt: new Date().toISOString(),
+                } as any;
               } catch {
                 // ignore
               }
-            }
-            // 统一在后台累积步骤，便于跨标签页聚合
-            try {
-              if (!currentRecording.flow) {
-                currentRecording.flow = {
-                  id: `flow_${Date.now()}`,
-                  name: '未命名录制',
-                  version: 1,
-                  steps: [],
-                  variables: [],
-                  meta: {
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString(),
-                  },
-                } as Flow;
-              }
-              currentRecording.flow.steps.push(step);
-              currentRecording.flow.meta = {
-                ...(currentRecording.flow.meta || ({} as any)),
-                updatedAt: new Date().toISOString(),
-              } as any;
-            } catch {
-              // ignore
             }
           }
         } else if (message.payload?.kind === 'stop') {

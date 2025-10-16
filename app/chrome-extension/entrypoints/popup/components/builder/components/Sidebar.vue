@@ -302,6 +302,12 @@ const filtered = computed(() => {
   background: #8ec5fc;
   color: #111;
 }
+.icon-scroll {
+  background: #0ea5e9;
+}
+.icon-drag {
+  background: #f97316;
+}
 .icon-assert {
   background: #16a34a;
 }
