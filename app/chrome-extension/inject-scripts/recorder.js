@@ -10,7 +10,7 @@
   // ================================================================
   const CONFIG = {
     INPUT_DEBOUNCE_MS: 500,
-    BATCH_SEND_MS: 80,
+    BATCH_SEND_MS: 100,
     SCROLL_DEBOUNCE_MS: 350,
     SENSITIVE_INPUT_TYPES: new Set(['password']),
     UI_MAX_STEPS: 30,
@@ -54,11 +54,9 @@
     },
 
     _choosePrimary(el, candidates) {
-      try {
-        if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
-          return `#${CSS.escape(el.id)}`;
-        }
-      } catch {}
+      if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
+        return `#${CSS.escape(el.id)}`;
+      }
       const priority = ['attr', 'css'];
       for (const p of priority) {
         const c = candidates.find((c) => c.type === p);
@@ -306,17 +304,6 @@
       if (container) container.scrollTop = container.scrollHeight;
     }
 
-    // Update the last timeline entry when a step is coalesced/modified
-    updateLastStep(step) {
-      const list = this._timeline || document.getElementById('__rr_rec_timeline_list') || null;
-      if (!list) return;
-      const last = list.lastElementChild;
-      if (!last) return;
-      const text = this._formatStepText(step, this._count);
-      const spans = last.querySelectorAll('span');
-      if (spans && spans[1]) spans[1].textContent = text;
-    }
-
     // Create a short, human-readable text for a recorded step
     _formatStepText(step, _idx) {
       try {
@@ -364,7 +351,9 @@
       this.batchTimer = null;
       this.scrollTimer = null;
 
-      this.pendingFlow = this._createEmptyFlow();
+      // Local, content-side buffer for batching/merging steps during recording.
+      // Not the authoritative Flow (background holds the real one).
+      this.sessionBuffer = this._createSessionBuffer();
       this.lastFill = { step: null, ts: 0 };
       // Recording-time element identity map (not persisted)
       this.el2ref = new WeakMap();
@@ -382,13 +371,23 @@
 
     // Lifecycle
     start(flowMeta) {
+      // Idempotent start: if already recording (and not paused), just ensure UI and listeners
+      if (this.isRecording && !this.isPaused) {
+        this.ui.ensure();
+        this._updateHoverListener();
+        return;
+      }
+      // If paused, treat start as resume to avoid resetting local buffer/UI timeline
+      if (this.isPaused) {
+        this.resume();
+        return;
+      }
       this._reset(flowMeta || {});
       this.isRecording = true;
       this.isPaused = false;
       this._attach();
       this.ui.ensure();
       this.ui.resetTimeline();
-      this._send({ kind: 'start', flow: this.pendingFlow });
     }
 
     stop() {
@@ -398,9 +397,8 @@
       if (this.scrollTimer) clearTimeout(this.scrollTimer);
       this.scrollTimer = null;
       this.lastFill = { step: null, ts: 0 };
-      const ret = this.pendingFlow;
-      this.pendingFlow.steps = [];
-      this._send({ kind: 'stop', flow: ret });
+      const ret = this.sessionBuffer;
+      this.sessionBuffer.steps = [];
       return ret;
     }
 
@@ -444,8 +442,8 @@
       }
     }
 
-    // Flow helpers
-    _createEmptyFlow() {
+    // Flow helpers (content-side buffer only)
+    _createSessionBuffer() {
       const nowIso = new Date().toISOString();
       return {
         id: `flow_${Date.now()}`,
@@ -458,12 +456,12 @@
     }
 
     _reset(meta) {
-      this.pendingFlow = this._createEmptyFlow();
+      this.sessionBuffer = this._createSessionBuffer();
       try {
         if (meta && typeof meta === 'object') {
-          if (meta.id) this.pendingFlow.id = String(meta.id);
-          if (meta.name) this.pendingFlow.name = String(meta.name);
-          if (meta.description) this.pendingFlow.description = String(meta.description);
+          if (meta.id) this.sessionBuffer.id = String(meta.id);
+          if (meta.name) this.sessionBuffer.name = String(meta.name);
+          if (meta.description) this.sessionBuffer.description = String(meta.description);
         }
       } catch {}
       this.lastFill = { step: null, ts: 0 };
@@ -472,16 +470,14 @@
 
     _pushStep(step) {
       step.id = step.id || `step_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      try {
-        if (window !== window.top && !this.frameSwitchPushed) {
-          const href = String(location && location.href ? location.href : '');
-          const frameStep = { type: 'switchFrame', frame: { urlContains: href } };
-          this.pendingFlow.steps.push(frameStep);
-          this.frameSwitchPushed = true;
-        }
-      } catch {}
-      this.pendingFlow.steps.push(step);
-      this.pendingFlow.meta.updatedAt = new Date().toISOString();
+      if (window !== window.top && !this.frameSwitchPushed) {
+        const href = String(location && location.href ? location.href : '');
+        const frameStep = { type: 'switchFrame', frame: { urlContains: href } };
+        this.sessionBuffer.steps.push(frameStep);
+        this.frameSwitchPushed = true;
+      }
+      this.sessionBuffer.steps.push(step);
+      this.sessionBuffer.meta.updatedAt = new Date().toISOString();
       this.batch.push(step);
       if (this.batchTimer) {
         clearTimeout(this.batchTimer);
@@ -508,9 +504,9 @@
     }
 
     _addVariable(key, sensitive, defVal) {
-      if (!this.pendingFlow.variables) this.pendingFlow.variables = [];
-      if (this.pendingFlow.variables.find((v) => v.key === key)) return;
-      this.pendingFlow.variables.push({ key, sensitive: !!sensitive, default: defVal || '' });
+      if (!this.sessionBuffer.variables) this.sessionBuffer.variables = [];
+      if (this.sessionBuffer.variables.find((v) => v.key === key)) return;
+      this.sessionBuffer.variables.push({ key, sensitive: !!sensitive, default: defVal || '' });
     }
 
     // Handlers
@@ -524,12 +520,8 @@
           const tt = String(t).toLowerCase();
           if (tt === 'checkbox' || tt === 'radio') return; // avoid duplicate with change
         }
-      } catch {}
-      try {
         const overlay = document.getElementById('__rr_rec_overlay');
         if (overlay && (el === overlay || (el.closest && el.closest('#__rr_rec_overlay')))) return;
-      } catch {}
-      try {
         const a = el.closest && el.closest('a[href]');
         const href = a && a.getAttribute && a.getAttribute('href');
         const tgt = a && a.getAttribute && a.getAttribute('target');
@@ -581,12 +573,10 @@
       const sameRef = !!(this.lastFill.step && this.lastFill.step._recordingRef === elRef);
       const within = nowTs - this.lastFill.ts <= CONFIG.INPUT_DEBOUNCE_MS;
       if (sameRef && within) {
-        try {
-          this.lastFill.step.value = value;
-          this.pendingFlow.meta.updatedAt = new Date().toISOString();
-          this.lastFill.ts = nowTs;
-          return;
-        } catch {}
+        this.lastFill.step.value = value;
+        this.sessionBuffer.meta.updatedAt = new Date().toISOString();
+        this.lastFill.ts = nowTs;
+        return;
       }
       const newStep = { type: 'fill', target, value, screenshotOnFail: true };
       // attach recording-time identity only in memory (not persisted)
@@ -606,12 +596,10 @@
         const sameRef = !!(this.lastFill.step && this.lastFill.step._recordingRef === elRef);
         const within = nowTs - this.lastFill.ts <= CONFIG.INPUT_DEBOUNCE_MS;
         if (sameRef && within) {
-          try {
-            this.lastFill.step.value = val;
-            this.pendingFlow.meta.updatedAt = new Date().toISOString();
-            this.lastFill.ts = nowTs;
-            return;
-          } catch {}
+          this.lastFill.step.value = val;
+          this.sessionBuffer.meta.updatedAt = new Date().toISOString();
+          this.lastFill.ts = nowTs;
+          return;
         }
         const st = { type: 'fill', target, value: val, screenshotOnFail: true };
         st._recordingRef = elRef;
@@ -699,17 +687,15 @@
               ? window.scrollX
               : document.documentElement.scrollLeft || 0;
         } else {
-          top = /** @type {any} */ (el).scrollTop || 0;
-          left = /** @type {any} */ (el).scrollLeft || 0;
+          top = el.scrollTop || 0;
+          left = el.scrollLeft || 0;
         }
       } catch {}
       const target = isDoc ? null : SelectorEngine.buildTarget(el);
       // Debounce/coalesce
       this._scrollPending = { isDoc, target, top, left };
       if (this.scrollTimer) {
-        try {
-          clearTimeout(this.scrollTimer);
-        } catch {}
+        clearTimeout(this.scrollTimer);
       }
       this.scrollTimer = setTimeout(() => {
         this.scrollTimer = null;
@@ -718,7 +704,7 @@
         if (!pending) return;
         const { isDoc: pDoc, target: pTarget, top: pTop, left: pLeft } = pending;
         // Try merge with last step
-        const steps = this.pendingFlow.steps;
+        const steps = this.sessionBuffer.steps;
         const last = steps.length ? steps[steps.length - 1] : null;
         if (last && last.type === 'scroll') {
           const sameDoc = pDoc && !last.target && last.mode === 'offset';
@@ -730,11 +716,9 @@
             last.target.selector === pTarget.selector &&
             last.mode === 'container';
           if (sameDoc || sameEl) {
-            try {
-              last.offset = { y: pTop, x: pLeft };
-              this.pendingFlow.meta.updatedAt = new Date().toISOString();
-              return;
-            } catch {}
+            last.offset = { y: pTop, x: pLeft };
+            this.sessionBuffer.meta.updatedAt = new Date().toISOString();
+            return;
           }
         }
         // New scroll step
@@ -774,17 +758,14 @@
         const rec = getRecorder();
         // Only respond to timeline updates when recording is active
         if (!rec.isRecording) {
-          try {
-            sendResponse({ ok: true, ignored: true });
-          } catch {}
+          sendResponse({ ok: true, ignored: true });
           return true;
         }
-        // UI should already exist from start/resume; avoid creating overlay here
+        // Replace entire timeline to avoid divergence across tabs
         const steps = Array.isArray(request.steps) ? request.steps : [];
+        rec.ui.resetTimeline();
         for (const st of steps) rec.ui.appendStep(st);
-        try {
-          sendResponse({ ok: true });
-        } catch {}
+        sendResponse({ ok: true });
         return true;
       }
       if (request.action === 'rr_recorder_control') {

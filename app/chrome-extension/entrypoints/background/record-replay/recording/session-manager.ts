@@ -88,15 +88,25 @@ export class RecordingSessionManager {
     this.broadcastTimelineUpdate(steps);
   }
 
-  // Broadcast timeline update to origin tab top-frame
+  // Broadcast timeline updates to relevant tabs (top-frame only)
   broadcastTimelineUpdate(steps: Step[]): void {
     try {
       if (!steps || steps.length === 0) return;
-      const origin = this.state.originTabId;
-      if (origin != null) {
+      // Send full timeline to keep UI consistent across tabs
+      const fullSteps = this.state.flow?.steps || [];
+      // Prefer broadcasting to all tabs that participated in this session, so timeline
+      // stays consistent when user switches across tabs/windows during a single session.
+      const targets = this.getActiveTabs();
+      const list =
+        targets && targets.length
+          ? targets
+          : this.state.originTabId != null
+            ? [this.state.originTabId]
+            : [];
+      for (const tabId of list) {
         chrome.tabs.sendMessage(
-          origin,
-          { action: TOOL_MESSAGE_TYPES.RR_TIMELINE_UPDATE, steps },
+          tabId,
+          { action: TOOL_MESSAGE_TYPES.RR_TIMELINE_UPDATE, steps: fullSteps },
           { frameId: 0 },
         );
       }
