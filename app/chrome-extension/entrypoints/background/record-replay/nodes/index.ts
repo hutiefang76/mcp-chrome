@@ -53,12 +53,12 @@ const registry = new Map<string, NodeRuntime<any>>([
 ]);
 
 export async function executeStep(ctx: ExecCtx, step: Step): Promise<ExecResult> {
-  const rt = registry.get((step as any).type);
-  if (!rt) throw new Error(`unsupported step type: ${String((step as any).type)}`);
-  const v = rt.validate ? rt.validate(step as any) : { ok: true };
-  if (!(v as any).ok) throw new Error(((v as any).errors || []).join(', ') || 'validation failed');
-  const out = await rt.run(ctx as any, step as any);
-  return (out || {}) as ExecResult;
+  const rt = registry.get(step.type);
+  if (!rt) throw new Error(`unsupported step type: ${String(step.type)}`);
+  const v = rt.validate ? rt.validate(step) : { ok: true };
+  if (!v.ok) throw new Error((v.errors || []).join(', ') || 'validation failed');
+  const out = await rt.run(ctx, step);
+  return out || {};
 }
 
 export type { ExecCtx, ExecResult, NodeRuntime } from './types';
