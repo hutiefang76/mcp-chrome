@@ -10,7 +10,8 @@ interface Coordinates {
 }
 
 interface ClickToolParams {
-  selector?: string; // CSS selector for the element to click
+  selector?: string; // CSS selector or XPath for the element to click
+  selectorType?: 'css' | 'xpath'; // Type of selector (default: 'css')
   ref?: string; // Element ref from accessibility tree (window.__claudeElementMap)
   coordinates?: Coordinates; // Coordinates to click at (x, y relative to viewport)
   waitForNavigation?: boolean; // Whether to wait for navigation to complete after click
@@ -35,6 +36,7 @@ class ClickTool extends BaseBrowserToolExecutor {
   async execute(args: ClickToolParams): Promise<ToolResult> {
     const {
       selector,
+      selectorType = 'css',
       coordinates,
       waitForNavigation = false,
       timeout = TIMEOUTS.DEFAULT_WAIT * 5,
@@ -65,6 +67,37 @@ class ClickTool extends BaseBrowserToolExecutor {
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
       }
 
+      let finalRef = args.ref;
+      let finalSelector = selector;
+
+      // If selector is XPath, convert to ref first
+      if (selector && selectorType === 'xpath') {
+        await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+        try {
+          const resolved = await this.sendMessageToTab(
+            tab.id,
+            {
+              action: TOOL_MESSAGE_TYPES.ENSURE_REF_FOR_SELECTOR,
+              selector,
+              isXPath: true,
+            },
+            frameId,
+          );
+          if (resolved && resolved.success && resolved.ref) {
+            finalRef = resolved.ref;
+            finalSelector = undefined; // Use ref instead of selector
+          } else {
+            return createErrorResponse(
+              `Failed to resolve XPath selector: ${resolved?.error || 'unknown error'}`,
+            );
+          }
+        } catch (error) {
+          return createErrorResponse(
+            `Error resolving XPath: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+
       await this.injectContentScript(tab.id, ['inject-scripts/click-helper.js']);
 
       // Send click message to content script
@@ -72,9 +105,9 @@ class ClickTool extends BaseBrowserToolExecutor {
         tab.id,
         {
           action: TOOL_MESSAGE_TYPES.CLICK_ELEMENT,
-          selector,
+          selector: finalSelector,
           coordinates,
-          ref: args.ref,
+          ref: finalRef,
           waitForNavigation,
           timeout,
           double: args.double === true,
@@ -86,6 +119,18 @@ class ClickTool extends BaseBrowserToolExecutor {
         frameId,
       );
 
+      // Determine actual click method used
+      let clickMethod: string;
+      if (coordinates) {
+        clickMethod = 'coordinates';
+      } else if (finalRef) {
+        clickMethod = 'ref';
+      } else if (finalSelector) {
+        clickMethod = 'selector';
+      } else {
+        clickMethod = 'unknown';
+      }
+
       return {
         content: [
           {
@@ -95,7 +140,7 @@ class ClickTool extends BaseBrowserToolExecutor {
               message: result.message || 'Click operation successful',
               elementInfo: result.elementInfo,
               navigationOccurred: result.navigationOccurred,
-              clickMethod: coordinates ? 'coordinates' : 'selector',
+              clickMethod,
             }),
           },
         ],
@@ -114,6 +159,7 @@ export const clickTool = new ClickTool();
 
 interface FillToolParams {
   selector?: string;
+  selectorType?: 'css' | 'xpath'; // Type of selector (default: 'css')
   ref?: string; // Element ref from accessibility tree
   // Accept string | number | boolean for broader form input coverage
   value: string | number | boolean;
@@ -130,7 +176,7 @@ class FillTool extends BaseBrowserToolExecutor {
    * Execute fill operation
    */
   async execute(args: FillToolParams): Promise<ToolResult> {
-    const { selector, ref, value, frameId } = args;
+    const { selector, selectorType = 'css', ref, value, frameId } = args;
 
     console.log(`Starting fill operation with options:`, args);
 
@@ -154,6 +200,37 @@ class FillTool extends BaseBrowserToolExecutor {
         return createErrorResponse(ERROR_MESSAGES.TAB_NOT_FOUND + ': Active tab has no ID');
       }
 
+      let finalRef = ref;
+      let finalSelector = selector;
+
+      // If selector is XPath, convert to ref first
+      if (selector && selectorType === 'xpath') {
+        await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+        try {
+          const resolved = await this.sendMessageToTab(
+            tab.id,
+            {
+              action: TOOL_MESSAGE_TYPES.ENSURE_REF_FOR_SELECTOR,
+              selector,
+              isXPath: true,
+            },
+            frameId,
+          );
+          if (resolved && resolved.success && resolved.ref) {
+            finalRef = resolved.ref;
+            finalSelector = undefined; // Use ref instead of selector
+          } else {
+            return createErrorResponse(
+              `Failed to resolve XPath selector: ${resolved?.error || 'unknown error'}`,
+            );
+          }
+        } catch (error) {
+          return createErrorResponse(
+            `Error resolving XPath: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+
       await this.injectContentScript(tab.id, ['inject-scripts/fill-helper.js']);
 
       // Send fill message to content script
@@ -161,8 +238,8 @@ class FillTool extends BaseBrowserToolExecutor {
         tab.id,
         {
           action: TOOL_MESSAGE_TYPES.FILL_ELEMENT,
-          selector,
-          ref,
+          selector: finalSelector,
+          ref: finalRef,
           value,
         },
         frameId,

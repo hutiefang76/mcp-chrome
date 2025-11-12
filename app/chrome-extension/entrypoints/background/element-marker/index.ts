@@ -205,8 +205,6 @@ export function initElementMarkerListeners() {
                       ? (req.timeoutMs as number)
                       : 3000,
                     button: (req.button || 'left') as any,
-                    bubbles: true,
-                    cancelable: true,
                     modifiers: req.modifiers || {},
                   } as any);
                   base.tool = { name: 'interaction.click', ok: !r.isError };
@@ -221,8 +219,6 @@ export function initElementMarkerListeners() {
                       ? (req.timeoutMs as number)
                       : 3000,
                     button: (req.button || 'left') as any,
-                    bubbles: true,
-                    cancelable: true,
                     modifiers: req.modifiers || {},
                   } as any);
                   base.tool = { name: 'interaction.click(double)', ok: !r.isError };
@@ -236,8 +232,6 @@ export function initElementMarkerListeners() {
                       ? (req.timeoutMs as number)
                       : 3000,
                     button: 'right',
-                    bubbles: true,
-                    cancelable: true,
                     modifiers: req.modifiers || {},
                   } as any);
                   base.tool = { name: 'interaction.click(right)', ok: !r.isError };

@@ -357,26 +357,52 @@ function matchUrl(
   return false;
 }
 
+// Track context menu IDs created by record-replay to avoid removing other menus
+const rrContextMenuIds = new Set<string>();
+
+async function refreshContextMenus(triggers: FlowTrigger[]) {
+  if (!(chrome as any).contextMenus?.create) return;
+
+  // Remove only our own menu items
+  await removeRecordReplayMenus();
+
+  // Create menus for enabled context menu triggers
+  for (const t of triggers) {
+    if (t.type !== 'contextMenu' || t.enabled === false) continue;
+    const id = `rr_menu_${t.id}`;
+    (t as any).menuId = id;
+
+    try {
+      await chrome.contextMenus.create({
+        id,
+        title: (t as any).title || '运行工作流',
+        contexts: (t as any).contexts || ['all'],
+      });
+      rrContextMenuIds.add(id);
+    } catch (err) {
+      console.warn('[RecordReplay] Failed to create context menu:', err);
+    }
+  }
+}
+
+async function removeRecordReplayMenus() {
+  if (!(chrome as any).contextMenus?.remove) {
+    rrContextMenuIds.clear();
+    return;
+  }
+
+  const pending = Array.from(rrContextMenuIds.values()).map((id) =>
+    chrome.contextMenus.remove(id).catch(() => {}),
+  );
+
+  if (pending.length) await Promise.all(pending);
+  rrContextMenuIds.clear();
+}
+
 async function refreshTriggers() {
   try {
     const triggers = await listTriggers();
-    // Guard: contextMenus permission may be missing in some builds
-    if ((chrome as any).contextMenus?.removeAll && (chrome as any).contextMenus?.create) {
-      try {
-        await chrome.contextMenus.removeAll();
-      } catch {}
-      for (const t of triggers) {
-        if (t.type === 'contextMenu' && t.enabled !== false) {
-          const id = `rr_menu_${t.id}`;
-          (t as any).menuId = id;
-          await chrome.contextMenus.create({
-            id,
-            title: (t as any).title || '运行工作流',
-            contexts: (t as any).contexts || ['all'],
-          });
-        }
-      }
-    }
+    await refreshContextMenus(triggers);
     await chrome.storage.local.set({ [STORAGE_KEYS.RR_TRIGGERS]: triggers });
     const domTriggers = triggers
       .filter((x) => x.type === 'dom' && x.enabled !== false)

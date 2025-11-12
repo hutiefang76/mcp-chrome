@@ -1,41 +1,1313 @@
 /* eslint-disable */
-// element-marker.js — content script overlay for marking elements with selectors
 (function () {
   if (window.__ELEMENT_MARKER_INSTALLED__) return;
   window.__ELEMENT_MARKER_INSTALLED__ = true;
+
   const IS_MAIN = window === window.top;
 
-  const STATE = {
-    active: false,
-    hoverEl: null,
-    selectedEl: null,
-    box: null,
-    highlighter: null,
-    rectsHost: null,
-    listMode: false,
-    selectorType: 'css', // 'css' | 'xpath'
-    hoveredList: [],
-    prefs: {
-      preferId: true,
-      preferStableAttr: true,
-      preferClass: true,
+  // ============================================================================
+  // Constants & Configuration
+  // ============================================================================
+
+  const CONFIG = {
+    DEFAULTS: {
+      PREFS: {
+        preferId: true,
+        preferStableAttr: true,
+        preferClass: true,
+      },
+      SELECTOR_TYPE: 'css',
+      LIST_MODE: false,
+    },
+    Z_INDEX: {
+      OVERLAY: 2147483646,
+      HIGHLIGHTER: 2147483645,
+      RECTS: 2147483644,
+    },
+    COLORS: {
+      PRIMARY: '#2563eb',
+      SUCCESS: '#10b981',
+      WARNING: '#f59e0b',
+      DANGER: '#ef4444',
+      HOVER: '#10b981',
+      VERIFY: '#3b82f6',
     },
   };
 
-  // Heuristic selector generator inspired by Automa elementSelector and the recorder SelectorEngine
+  // ============================================================================
+  // Panel Host Module - Shadow DOM Management
+  // ============================================================================
+
+  const PanelHost = (() => {
+    let hostElement = null;
+    let shadowRoot = null;
+
+    const PANEL_STYLES = `
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      .em-panel {
+        width: 400px;
+        background: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        padding: 20px;
+        transition: opacity 150ms ease;
+      }
+
+
+      /* Header */
+      .em-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        user-select: none;
+      }
+
+      .em-title {
+        font-size: 20px;
+        font-weight: 500;
+        color: #262626;
+      }
+
+      .em-header-actions {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+      }
+
+      .em-icon-btn {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        background: transparent;
+        color: #a3a3a3;
+        cursor: pointer;
+        transition: color 150ms ease;
+        padding: 0;
+      }
+
+      .em-icon-btn:hover {
+        color: #525252;
+      }
+
+      .em-icon-btn svg {
+        width: 20px;
+        height: 20px;
+        stroke-width: 2;
+      }
+
+      /* Controls Row */
+      .em-controls {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .em-select-wrapper {
+        flex: 1;
+        position: relative;
+      }
+
+      .em-select {
+        width: 100%;
+        height: 44px;
+        padding: 0 40px 0 16px;
+        background: #f5f5f5;
+        color: #262626;
+        font-size: 15px;
+        border: none;
+        border-radius: 10px;
+        appearance: none;
+        cursor: pointer;
+        outline: none;
+        font-family: inherit;
+        font-weight: 400;
+      }
+
+      .em-select-wrapper::after {
+        content: '';
+        position: absolute;
+        right: 16px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 0;
+        height: 0;
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 6px solid #737373;
+        pointer-events: none;
+      }
+
+      .em-square-btn {
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f5f5f5;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: background 150ms ease;
+        padding: 0;
+      }
+
+      .em-square-btn:hover {
+        background: #e5e5e5;
+      }
+
+      .em-square-btn.active {
+        background: #2563eb;
+      }
+
+      .em-square-btn.active svg {
+        color: #ffffff;
+      }
+
+      .em-square-btn svg {
+        width: 18px;
+        height: 18px;
+        color: #525252;
+        stroke-width: 2;
+      }
+
+      /* Selector Display */
+      .em-selector-display {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 44px;
+        padding: 0 12px 0 16px;
+        background: #f5f5f5;
+        border-radius: 10px;
+        margin-bottom: 16px;
+      }
+
+      .em-selector-display svg {
+        width: 18px;
+        height: 18px;
+        color: #a3a3a3;
+        flex-shrink: 0;
+        stroke-width: 2;
+      }
+
+      .em-selector-text {
+        flex: 1;
+        font-size: 14px;
+        color: #525252;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        user-select: text;
+      }
+
+      .em-selector-nav {
+        display: flex;
+        gap: 2px;
+      }
+
+      .em-nav-btn {
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        transition: background 150ms ease;
+        border-radius: 6px;
+        padding: 0;
+      }
+
+      .em-nav-btn:hover {
+        background: #e5e5e5;
+      }
+
+      .em-nav-btn svg {
+        width: 16px;
+        height: 16px;
+        color: #525252;
+        stroke-width: 2;
+      }
+
+      /* Tabs */
+      .em-tabs {
+        display: inline-flex;
+        gap: 2px;
+        padding: 2px;
+        background: #f5f5f5;
+        border-radius: 8px;
+        margin-bottom: 16px;
+      }
+
+      .em-tab {
+        padding: 6px 16px;
+        font-size: 12px;
+        font-weight: 500;
+        color: #737373;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 150ms ease;
+      }
+
+      .em-tab:hover {
+        color: #404040;
+      }
+
+      .em-tab.active {
+        color: #262626;
+        background: #ffffff;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      }
+
+      /* Content */
+      .em-content {
+        margin-bottom: 0;
+      }
+
+      #__em_tab_settings {
+        max-height: min(60vh, 480px);
+        overflow-y: auto;
+        scrollbar-width: none; /* Firefox */
+        -ms-overflow-style: none; /* IE and Edge */
+      }
+
+      #__em_tab_settings::-webkit-scrollbar {
+        display: none; /* Chrome, Safari, Opera */
+      }
+
+      .em-section-title {
+        font-size: 13px;
+        color: #737373;
+        margin-bottom: 16px;
+        font-weight: 400;
+      }
+
+      .em-attributes {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .em-attribute {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .em-attribute-label {
+        font-size: 12px;
+        color: #a3a3a3;
+        font-weight: 400;
+      }
+
+      .em-attribute-value {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 44px;
+        padding: 0 12px 0 16px;
+        background: #f5f5f5;
+        border-radius: 10px;
+      }
+
+      .em-attribute-value.editable {
+        padding: 0 16px;
+      }
+
+      .em-attribute-value svg {
+        width: 18px;
+        height: 18px;
+        stroke-width: 2;
+        cursor: pointer;
+        transition: color 150ms ease;
+        flex-shrink: 0;
+      }
+
+      .em-attribute-value svg.copy-icon {
+        color: #a3a3a3;
+      }
+
+      .em-attribute-value svg.copy-icon:hover {
+        color: #525252;
+      }
+
+      .em-attribute-value svg.copy-icon.disabled {
+        color: #d4d4d4;
+        cursor: default;
+      }
+
+      .em-attribute-text {
+        flex: 1;
+        font-size: 14px;
+        color: #404040;
+        user-select: text;
+      }
+
+      .em-attribute-text.empty {
+        color: #a3a3a3;
+      }
+
+      .em-input {
+        flex: 1;
+        border: none;
+        background: transparent;
+        font-size: 14px;
+        color: #404040;
+        font-family: inherit;
+        outline: none;
+        padding: 0;
+        height: 44px;
+      }
+
+      .em-input::placeholder {
+        color: #a3a3a3;
+      }
+
+      /* Settings Panel */
+      .em-settings {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .em-settings-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .em-settings-label {
+        font-size: 12px;
+        font-weight: 500;
+        color: #737373;
+      }
+
+      .em-checkbox-group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .em-checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        color: #404040;
+        cursor: pointer;
+      }
+
+      .em-checkbox-label input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+        margin: 0;
+      }
+
+      /* Action Buttons */
+      .em-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 20px;
+      }
+
+      .em-btn {
+        flex: 1;
+        height: 40px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 150ms ease;
+      }
+
+      .em-btn-primary {
+        background: #2563eb;
+        color: #ffffff;
+      }
+
+      .em-btn-primary:hover {
+        background: #1d4ed8;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+      }
+
+      .em-btn-success {
+        background: #10b981;
+        color: #ffffff;
+      }
+
+      .em-btn-success:hover {
+        background: #059669;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+      }
+
+      .em-btn-ghost {
+        background: #f5f5f5;
+        color: #404040;
+      }
+
+      .em-btn-ghost:hover {
+        background: #e5e5e5;
+      }
+
+      /* Footer */
+      .em-footer {
+        font-size: 12px;
+        color: #a3a3a3;
+        text-align: center;
+        margin-top: 16px;
+      }
+
+      .em-footer kbd {
+        display: inline-block;
+        padding: 2px 6px;
+        background: #f5f5f5;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 11px;
+        color: #737373;
+      }
+
+      /* Status */
+      .em-status {
+        font-size: 13px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .em-status.idle {
+        display: none;
+      }
+
+      .em-status.running {
+        background: rgba(37, 99, 235, 0.1);
+        color: #2563eb;
+      }
+
+      .em-status.success {
+        background: rgba(16, 185, 129, 0.1);
+        color: #10b981;
+      }
+
+      .em-status.failure {
+        background: rgba(239, 68, 68, 0.1);
+        color: #ef4444;
+      }
+
+      /* Grid Layout */
+      .em-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+
+      .em-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .em-field-label {
+        font-size: 12px;
+        color: #a3a3a3;
+      }
+
+      .em-field-input {
+        height: 40px;
+        padding: 0 12px;
+        background: #f5f5f5;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #404040;
+        font-family: inherit;
+        outline: none;
+      }
+
+      .em-field-input:focus {
+        background: #e5e5e5;
+      }
+
+      /* Details/Accordion */
+      .em-details {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #f5f5f5;
+      }
+
+      .em-details summary {
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+        color: #737373;
+        padding: 8px 0;
+        user-select: none;
+        list-style: none;
+      }
+
+      .em-details summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .em-details summary:hover {
+        color: #404040;
+      }
+
+      .em-details[open] summary {
+        margin-bottom: 12px;
+      }
+
+      /* Dragging state */
+      body[data-em-dragging] {
+        user-select: none !important;
+        cursor: grabbing !important;
+      }
+
+      body[data-em-dragging] * {
+        cursor: grabbing !important;
+      }
+
+      /* SVG Icons */
+      svg {
+        fill: none;
+        stroke: currentColor;
+      }
+
+      .em-drag-handle {
+        cursor: grab;
+      }
+
+      .em-drag-handle:active {
+        cursor: grabbing;
+      }
+    `;
+
+    const PANEL_TEMPLATE = `
+      <div class="em-panel" id="em_panel_root">
+        <!-- Header -->
+        <div class="em-header em-drag-handle" id="__em_drag_handle" title="Drag to move">
+          <h2 class="em-title">元素标注</h2>
+          <div class="em-header-actions">
+            <button class="em-icon-btn" id="__em_close" title="Close">
+              <svg viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="em-controls">
+          <div class="em-select-wrapper">
+            <select class="em-select" id="__em_selector_type">
+              <option value="css">CSS Selector</option>
+              <option value="xpath">XPath</option>
+            </select>
+          </div>
+          <button class="em-square-btn" id="__em_toggle_list" title="列表模式 - 批量标注相似元素 (仅支持CSS)">
+            <svg viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+          </button>
+          <button class="em-square-btn" id="__em_toggle_tab" title="Toggle settings">
+            <svg viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Selector Display -->
+        <div class="em-selector-display">
+          <svg viewBox="0 0 24 24" id="__em_copy_selector" title="Copy selector">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+          </svg>
+          <span class="em-selector-text" id="__em_selector_text">Click an element to select</span>
+          <div class="em-selector-nav">
+            <button class="em-nav-btn" id="__em_nav_up" title="Select parent">
+              <svg viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>
+              </svg>
+            </button>
+            <button class="em-nav-btn" id="__em_nav_down" title="Select child">
+              <svg viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="em-tabs">
+          <button class="em-tab active" data-tab="attributes">Attributes</button>
+          <button class="em-tab" data-tab="validation">Validation</button>
+          <button class="em-tab" data-tab="settings">Options</button>
+        </div>
+
+        <!-- Status -->
+        <div class="em-status idle" id="__em_status"></div>
+
+        <!-- Content: Attributes Tab -->
+        <div class="em-content" id="__em_tab_attributes">
+          <h3 class="em-section-title">#1 Element</h3>
+          
+          <div class="em-attributes">
+            <div class="em-attribute">
+              <div class="em-attribute-label">name</div>
+              <div class="em-attribute-value editable">
+                <input class="em-input" id="__em_name" placeholder="Element name" />
+              </div>
+            </div>
+
+            <div class="em-attribute">
+              <div class="em-attribute-label">selector</div>
+              <div class="em-attribute-value">
+                <svg class="copy-icon" viewBox="0 0 24 24" id="__em_copy" title="Copy">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                </svg>
+                <span class="em-attribute-text" id="__em_selector">-</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="em-actions">
+            <button class="em-btn em-btn-success" id="__em_save">Save</button>
+            <button class="em-btn em-btn-ghost" id="__em_cancel">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Content: Validation Tab -->
+        <div class="em-content" id="__em_tab_validation" style="display: none;">
+          <div class="em-settings">
+            <div class="em-settings-group">
+              <div class="em-settings-label">Action</div>
+              <div class="em-select-wrapper">
+                <select class="em-select" id="__em_action">
+                  <option value="hover">Hover</option>
+                  <option value="left_click">Left click</option>
+                  <option value="double_click">Double click</option>
+                  <option value="right_click">Right click</option>
+                  <option value="scroll">Scroll</option>
+                  <option value="type_text">Type text</option>
+                  <option value="press_keys">Press keys</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Action-specific inputs (dynamically shown/hidden) -->
+            <div class="em-settings-group" id="__em_action_text_group" style="display: none;">
+              <div class="em-settings-label">Text</div>
+              <input class="em-field-input" id="__em_action_text" placeholder="Text to type" />
+            </div>
+
+            <div class="em-settings-group" id="__em_action_keys_group" style="display: none;">
+              <div class="em-settings-label">Keys</div>
+              <input class="em-field-input" id="__em_action_keys" placeholder="Keys to press (e.g., Enter, Ctrl+C)" />
+            </div>
+
+            <div class="em-settings-group" id="__em_scroll_options" style="display: none;">
+              <div class="em-settings-label">Scroll Direction</div>
+              <div class="em-select-wrapper">
+                <select class="em-select" id="__em_scroll_direction">
+                  <option value="down">Down</option>
+                  <option value="up">Up</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+              </div>
+              <div class="em-field" style="margin-top: 8px;">
+                <div class="em-field-label">Distance (pixels)</div>
+                <input class="em-field-input" id="__em_scroll_distance" type="number" value="300" />
+              </div>
+            </div>
+
+            <!-- Click-specific options -->
+            <div id="__em_click_options" style="display: none;">
+              <div class="em-grid">
+                <div class="em-field">
+                  <div class="em-field-label">Button</div>
+                  <select class="em-select" id="__em_btn">
+                    <option value="left">Left</option>
+                    <option value="middle">Middle</option>
+                    <option value="right">Right</option>
+                  </select>
+                </div>
+                <div class="em-field">
+                  <div class="em-field-label">Timeout (ms)</div>
+                  <input class="em-field-input" id="__em_nav_timeout" type="number" value="3000" />
+                </div>
+              </div>
+
+              <div class="em-checkbox-group" style="margin-top: 12px;">
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_wait_nav" />
+                  <span>Wait for navigation</span>
+                </label>
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_mod_alt" />
+                  <span>Alt key</span>
+                </label>
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_mod_ctrl" />
+                  <span>Ctrl key</span>
+                </label>
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_mod_meta" />
+                  <span>Meta key</span>
+                </label>
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_mod_shift" />
+                  <span>Shift key</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="em-actions" style="margin-top: 16px;">
+              <button class="em-btn em-btn-primary" id="__em_validate">Validate</button>
+            </div>
+
+            <!-- Validation History -->
+            <div id="__em_validation_history" style="margin-top: 16px; display: none;">
+              <div class="em-settings-label">Recent Validations</div>
+              <div id="__em_history_list" style="font-size: 12px; color: #737373; margin-top: 8px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Content: Settings Tab -->
+        <div class="em-content" id="__em_tab_settings" style="display: none;">
+          <div class="em-settings">
+            <div class="em-settings-group">
+              <div class="em-settings-label">Selector Preferences</div>
+              <div class="em-checkbox-group">
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_pref_id" checked />
+                  <span>Prefer ID</span>
+                </label>
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_pref_attr" checked />
+                  <span>Prefer stable attributes</span>
+                </label>
+                <label class="em-checkbox-label">
+                  <input type="checkbox" id="__em_pref_class" checked />
+                  <span>Prefer class names</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="em-footer">
+          Click or press <kbd>Space</kbd> to select an element
+        </div>
+      </div>
+    `;
+
+    function mount() {
+      if (hostElement) return { host: hostElement, shadow: shadowRoot };
+
+      hostElement = document.createElement('div');
+      hostElement.id = '__element_marker_overlay';
+      Object.assign(hostElement.style, {
+        position: 'fixed',
+        top: '24px',
+        right: '24px',
+        zIndex: String(CONFIG.Z_INDEX.OVERLAY),
+        pointerEvents: 'none',
+      });
+
+      shadowRoot = hostElement.attachShadow({ mode: 'open' });
+      shadowRoot.innerHTML = `<style>${PANEL_STYLES}</style>${PANEL_TEMPLATE}`;
+
+      hostElement.querySelector = (...args) => shadowRoot.querySelector(...args);
+      hostElement.querySelectorAll = (...args) => shadowRoot.querySelectorAll(...args);
+
+      const panel = shadowRoot.querySelector('.em-panel');
+      if (panel) {
+        panel.style.pointerEvents = 'auto';
+      }
+
+      document.documentElement.appendChild(hostElement);
+      return { host: hostElement, shadow: shadowRoot };
+    }
+
+    function unmount() {
+      if (hostElement?.parentNode) {
+        hostElement.parentNode.removeChild(hostElement);
+      }
+      hostElement = null;
+      shadowRoot = null;
+    }
+
+    function getHost() {
+      return hostElement;
+    }
+
+    function getShadow() {
+      return shadowRoot;
+    }
+
+    return {
+      mount,
+      unmount,
+      getHost,
+      getShadow,
+    };
+  })();
+
+  // ============================================================================
+  // State Store Module - Centralized State Management
+  // ============================================================================
+
+  const StateStore = (() => {
+    const state = {
+      selectorType: CONFIG.DEFAULTS.SELECTOR_TYPE,
+      listMode: CONFIG.DEFAULTS.LIST_MODE,
+      prefs: { ...CONFIG.DEFAULTS.PREFS },
+      activeTab: 'attributes',
+      validation: {
+        status: 'idle',
+        message: '',
+      },
+      validationHistory: [], // Last 5 validation results
+    };
+
+    const listeners = new Set();
+
+    function init() {
+      return state;
+    }
+
+    function get(key) {
+      return key ? state[key] : state;
+    }
+
+    function set(partial) {
+      const changed = {};
+
+      Object.keys(partial).forEach((key) => {
+        if (JSON.stringify(state[key]) !== JSON.stringify(partial[key])) {
+          changed[key] = true;
+          state[key] = partial[key];
+        }
+      });
+
+      if (Object.keys(changed).length === 0) return;
+
+      if (changed.validation) {
+        updateValidationUI();
+      }
+      if (changed.activeTab) {
+        updateTabUI();
+      }
+      if (changed.listMode) {
+        updateListModeUI();
+      }
+      if (changed.validationHistory) {
+        updateValidationHistoryUI();
+      }
+
+      notifyListeners();
+    }
+
+    function subscribe(callback) {
+      listeners.add(callback);
+      return () => listeners.delete(callback);
+    }
+
+    function notifyListeners() {
+      listeners.forEach((cb) => {
+        try {
+          cb(state);
+        } catch (err) {
+          console.error('[StateStore] Listener error:', err);
+        }
+      });
+    }
+
+    function updateValidationUI() {
+      const statusEl = PanelHost.getShadow()?.getElementById('__em_status');
+      if (!statusEl) return;
+
+      const { status, message } = state.validation;
+      statusEl.className = `em-status ${status}`;
+      statusEl.textContent = message;
+    }
+
+    function updateListModeUI() {
+      const shadow = PanelHost.getShadow();
+      if (!shadow) return;
+
+      const btn = shadow.getElementById('__em_toggle_list');
+      if (!btn) return;
+
+      if (state.listMode) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    }
+
+    function updateTabUI() {
+      const shadow = PanelHost.getShadow();
+      if (!shadow) return;
+
+      const tabs = shadow.querySelectorAll('.em-tab');
+      tabs.forEach((tab) => {
+        if (tab.dataset.tab === state.activeTab) {
+          tab.classList.add('active');
+        } else {
+          tab.classList.remove('active');
+        }
+      });
+
+      const attrContent = shadow.getElementById('__em_tab_attributes');
+      const validationContent = shadow.getElementById('__em_tab_validation');
+      const settingsContent = shadow.getElementById('__em_tab_settings');
+
+      if (attrContent)
+        attrContent.style.display = state.activeTab === 'attributes' ? 'block' : 'none';
+      if (validationContent)
+        validationContent.style.display = state.activeTab === 'validation' ? 'block' : 'none';
+      if (settingsContent)
+        settingsContent.style.display = state.activeTab === 'settings' ? 'block' : 'none';
+    }
+
+    function updateValidationHistoryUI() {
+      const shadow = PanelHost.getShadow();
+      if (!shadow) return;
+
+      const historyContainer = shadow.getElementById('__em_validation_history');
+      const historyList = shadow.getElementById('__em_history_list');
+      if (!historyContainer || !historyList) return;
+
+      if (state.validationHistory.length === 0) {
+        historyContainer.style.display = 'none';
+        return;
+      }
+
+      historyContainer.style.display = 'block';
+      historyList.innerHTML = state.validationHistory
+        .slice(-5)
+        .reverse()
+        .map((entry) => {
+          const icon = entry.success ? '✓' : '✗';
+          const color = entry.success ? '#10b981' : '#ef4444';
+          const timestamp = new Date(entry.timestamp).toLocaleTimeString();
+          return `<div style="padding: 6px 0; border-bottom: 1px solid #f5f5f5;">
+            <span style="color: ${color}; font-weight: 600;">${icon}</span>
+            <span style="margin-left: 6px;">${entry.action}</span>
+            <span style="float: right; color: #a3a3a3; font-size: 11px;">${timestamp}</span>
+          </div>`;
+        })
+        .join('');
+    }
+
+    return {
+      init,
+      get,
+      set,
+      subscribe,
+    };
+  })();
+
+  // ============================================================================
+  // Drag Controller Module
+  // ============================================================================
+
+  const DragController = (() => {
+    let dragging = false;
+    let startPos = { x: 0, y: 0 };
+    let startOffset = { top: 0, right: 0 };
+
+    function init(handleElement) {
+      if (!handleElement) return;
+      handleElement.addEventListener('mousedown', onDragStart);
+    }
+
+    function onDragStart(event) {
+      event.preventDefault();
+      dragging = true;
+
+      const host = PanelHost.getHost();
+      if (!host) return;
+
+      startPos = { x: event.clientX, y: event.clientY };
+      startOffset = {
+        top: parseInt(host.style.top) || 0,
+        right: parseInt(host.style.right) || 0,
+      };
+
+      document.addEventListener('mousemove', onDragMove, { capture: true, passive: false });
+      document.addEventListener('mouseup', onDragEnd, { capture: true, passive: false });
+      document.body.setAttribute('data-em-dragging', 'true');
+    }
+
+    function onDragMove(event) {
+      if (!dragging) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const host = PanelHost.getHost();
+      if (!host) return;
+
+      const deltaX = event.clientX - startPos.x;
+      const deltaY = event.clientY - startPos.y;
+
+      const newTop = Math.max(8, startOffset.top + deltaY);
+      const newRight = Math.max(8, startOffset.right - deltaX);
+
+      host.style.top = `${newTop}px`;
+      host.style.right = `${newRight}px`;
+    }
+
+    function onDragEnd(event) {
+      if (!dragging) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      dragging = false;
+      document.removeEventListener('mousemove', onDragMove, { capture: true });
+      document.removeEventListener('mouseup', onDragEnd, { capture: true });
+      document.body.removeAttribute('data-em-dragging');
+    }
+
+    function destroy() {
+      if (dragging) {
+        onDragEnd(new MouseEvent('mouseup'));
+      }
+    }
+
+    return { init, destroy };
+  })();
+
+  // [继续下一部分...]
+  // ============================================================================
+  // Selector Engine - Heuristic Selector Generation
+  // ============================================================================
+
   function generateSelector(el) {
     if (!(el instanceof Element)) return '';
 
-    // 1) Unique ID
-    if (
-      STATE.prefs.preferId &&
-      el.id &&
-      document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1
-    ) {
-      return `#${CSS.escape(el.id)}`;
+    const prefs = StateStore.get('prefs');
+
+    if (prefs.preferId && el.id) {
+      const idSel = `#${CSS.escape(el.id)}`;
+      try {
+        if (document.querySelectorAll(idSel).length === 1) return idSel;
+      } catch {}
     }
 
-    // 2) Stable attributes preferred
+    if (prefs.preferStableAttr) {
+      const attrNames = [
+        'data-testid',
+        'data-testId',
+        'data-test',
+        'data-qa',
+        'data-cy',
+        'name',
+        'title',
+        'alt',
+        'aria-label',
+      ];
+      const tag = el.tagName.toLowerCase();
+
+      for (const attr of attrNames) {
+        const v = el.getAttribute(attr);
+        if (!v) continue;
+        const attrSel = `[${attr}="${CSS.escape(v)}"]`;
+        const testSel = /^(input|textarea|select)$/i.test(tag) ? `${tag}${attrSel}` : attrSel;
+        try {
+          if (document.querySelectorAll(testSel).length === 1) return testSel;
+        } catch {}
+      }
+    }
+
+    if (prefs.preferClass) {
+      try {
+        const classes = Array.from(el.classList || []).filter(
+          (c) => c && /^[a-zA-Z0-9_-]+$/.test(c),
+        );
+        const tag = el.tagName.toLowerCase();
+
+        for (const cls of classes) {
+          const sel = `.${CSS.escape(cls)}`;
+          if (document.querySelectorAll(sel).length === 1) return sel;
+        }
+
+        for (const cls of classes) {
+          const sel = `${tag}.${CSS.escape(cls)}`;
+          if (document.querySelectorAll(sel).length === 1) return sel;
+        }
+
+        for (let i = 0; i < Math.min(classes.length, 3); i++) {
+          for (let j = i + 1; j < Math.min(classes.length, 3); j++) {
+            const sel = `.${CSS.escape(classes[i])}.${CSS.escape(classes[j])}`;
+            if (document.querySelectorAll(sel).length === 1) return sel;
+          }
+        }
+      } catch {}
+    }
+
+    if (prefs.preferStableAttr) {
+      try {
+        let cur = el;
+        const anchorAttrs = [
+          'id',
+          'data-testid',
+          'data-testId',
+          'data-test',
+          'data-qa',
+          'data-cy',
+          'name',
+        ];
+
+        while (cur && cur !== document.body) {
+          if (cur.id) {
+            const anchor = `#${CSS.escape(cur.id)}`;
+            if (document.querySelectorAll(anchor).length === 1) {
+              const rel = buildPathFromAncestor(cur, el);
+              const composed = rel ? `${anchor} ${rel}` : anchor;
+              if (document.querySelector(composed) === el) return composed;
+            }
+          }
+
+          for (const attr of anchorAttrs) {
+            const val = cur.getAttribute(attr);
+            if (!val) continue;
+            const aSel = `[${attr}="${CSS.escape(val)}"]`;
+            if (document.querySelectorAll(aSel).length === 1) {
+              const rel = buildPathFromAncestor(cur, el);
+              const composed = rel ? `${aSel} ${rel}` : aSel;
+              if (document.querySelector(composed) === el) return composed;
+            }
+          }
+          cur = cur.parentElement;
+        }
+      } catch {}
+    }
+
+    return buildFullPath(el);
+  }
+
+  function buildPathFromAncestor(ancestor, target) {
+    const segs = [];
+    let cur = target;
+
+    while (cur && cur !== ancestor && cur !== document.body) {
+      let seg = cur.tagName.toLowerCase();
+      const parent = cur.parentElement;
+
+      if (parent) {
+        const siblings = Array.from(parent.children).filter((c) => c.tagName === cur.tagName);
+        if (siblings.length > 1) {
+          seg += `:nth-of-type(${siblings.indexOf(cur) + 1})`;
+        }
+      }
+
+      segs.unshift(seg);
+      cur = parent;
+    }
+
+    return segs.join(' > ');
+  }
+
+  function buildFullPath(el) {
+    let path = '';
+    let current = el;
+
+    while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName !== 'BODY') {
+      let sel = current.tagName.toLowerCase();
+      const parent = current.parentElement;
+
+      if (parent) {
+        const siblings = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
+        if (siblings.length > 1) {
+          sel += `:nth-of-type(${siblings.indexOf(current) + 1})`;
+        }
+      }
+
+      path = path ? `${sel} > ${path}` : sel;
+      current = parent;
+    }
+
+    return path ? `body > ${path}` : 'body';
+  }
+
+  function generateXPath(el) {
+    if (!(el instanceof Element)) return '';
+    if (el.id) return `//*[@id="${el.id}"]`;
+
+    const segs = [];
+    let cur = el;
+
+    while (cur && cur.nodeType === 1 && cur !== document.documentElement) {
+      const tag = cur.tagName.toLowerCase();
+
+      if (cur.id) {
+        segs.unshift(`//*[@id="${cur.id}"]`);
+        break;
+      }
+
+      let i = 1;
+      let sib = cur;
+      while ((sib = sib.previousElementSibling)) {
+        if (sib.tagName.toLowerCase() === tag) i++;
+      }
+
+      segs.unshift(`${tag}[${i}]`);
+      cur = cur.parentElement;
+    }
+
+    return segs[0]?.startsWith('//*') ? segs.join('/') : '//' + segs.join('/');
+  }
+
+  function generateListSelector(target) {
+    const list = computeElementList(target);
+    const selected = list?.[0] || target;
+    const parent = selected.parentElement;
+
+    if (!parent) return generateSelector(target);
+
+    const parentSel = generateSelector(parent);
+    const childRel = generateSelectorWithinRoot(selected, parent);
+
+    return parentSel && childRel ? `${parentSel} ${childRel}` : generateSelector(target);
+  }
+
+  function generateSelectorWithinRoot(el, root) {
+    if (!(el instanceof Element)) return '';
+
+    const tag = el.tagName.toLowerCase();
+
+    if (el.id) {
+      const idSel = `#${CSS.escape(el.id)}`;
+      try {
+        if (document.querySelectorAll(idSel).length === 1) return idSel;
+      } catch {}
+    }
+
     const attrNames = [
       'data-testid',
       'data-testId',
@@ -47,109 +1319,32 @@
       'alt',
       'aria-label',
     ];
-    const tag = el.tagName ? el.tagName.toLowerCase() : '';
-    for (const attr of STATE.prefs.preferStableAttr ? attrNames : []) {
-      const v = el.getAttribute && el.getAttribute(attr);
+
+    for (const attr of attrNames) {
+      const v = el.getAttribute(attr);
       if (!v) continue;
-      const attrSel = `[${attr}="${CSS.escape(v)}"]`;
-      const testSel = tag && /^(input|textarea|select)$/i.test(tag) ? `${tag}${attrSel}` : attrSel;
+      const aSel = `[${attr}="${CSS.escape(v)}"]`;
+      const testSel = /^(input|textarea|select)$/i.test(tag) ? `${tag}${aSel}` : aSel;
       try {
-        if (document.querySelectorAll(testSel).length === 1) return testSel;
+        if (root.querySelectorAll(testSel).length === 1) return testSel;
       } catch {}
     }
 
-    // 3) Unique class-based selectors
     try {
-      const classes = STATE.prefs.preferClass
-        ? Array.from(el.classList || []).filter((c) => c && /^[a-zA-Z0-9_-]+$/.test(c))
-        : [];
+      const classes = Array.from(el.classList || []).filter((c) => c && /^[a-zA-Z0-9_-]+$/.test(c));
+
       for (const cls of classes) {
         const sel = `.${CSS.escape(cls)}`;
-        if (document.querySelectorAll(sel).length === 1) return sel;
+        if (root.querySelectorAll(sel).length === 1) return sel;
       }
-      if (tag) {
-        for (const cls of classes) {
-          const sel = `${tag}.${CSS.escape(cls)}`;
-          if (document.querySelectorAll(sel).length === 1) return sel;
-        }
-      }
-      for (let i = 0; i < Math.min(classes.length, 3); i++) {
-        for (let j = i + 1; j < Math.min(classes.length, 3); j++) {
-          const sel = `.${CSS.escape(classes[i])}.${CSS.escape(classes[j])}`;
-          if (document.querySelectorAll(sel).length === 1) return sel;
-        }
+
+      for (const cls of classes) {
+        const sel = `${tag}.${CSS.escape(cls)}`;
+        if (root.querySelectorAll(sel).length === 1) return sel;
       }
     } catch {}
 
-    // 4) Build relative path from nearest unique anchor (id/attr)
-    try {
-      let cur = el;
-      const anchorAttrs = [
-        'id',
-        'data-testid',
-        'data-testId',
-        'data-test',
-        'data-qa',
-        'data-cy',
-        'name',
-      ];
-      while (cur && cur !== document.body) {
-        if (cur.id && document.querySelectorAll(`#${CSS.escape(cur.id)}`).length === 1) {
-          const anchor = `#${CSS.escape(cur.id)}`;
-          const rel = buildPathFromAncestor(cur, el);
-          const composed = rel ? `${anchor} ${rel}` : anchor;
-          if (document.querySelector(composed)) return composed;
-        }
-        for (const a of STATE.prefs.preferStableAttr ? anchorAttrs : []) {
-          const val = cur.getAttribute && cur.getAttribute(a);
-          if (!val) continue;
-          const aSel = `[${a}="${CSS.escape(val)}"]`;
-          if (document.querySelectorAll(aSel).length === 1) {
-            const rel = buildPathFromAncestor(cur, el);
-            const composed = rel ? `${aSel} ${rel}` : aSel;
-            if (document.querySelector(composed)) return composed;
-          }
-        }
-        cur = cur.parentElement;
-      }
-    } catch {}
-
-    // 5) Fallback full path
-    let path = '';
-    let current = el;
-    while (current && current.nodeType === Node.ELEMENT_NODE && current.tagName !== 'BODY') {
-      let sel = current.tagName.toLowerCase();
-      const parent = current.parentElement;
-      if (parent) {
-        const siblings = Array.from(parent.children).filter((c) => c.tagName === current.tagName);
-        if (siblings.length > 1) {
-          const index = siblings.indexOf(current) + 1;
-          sel += `:nth-of-type(${index})`;
-        }
-      }
-      path = path ? `${sel} > ${path}` : sel;
-      current = parent;
-    }
-    return path ? `body > ${path}` : 'body';
-  }
-
-  function buildPathFromAncestor(ancestor, target) {
-    const segs = [];
-    let cur = target;
-    while (cur && cur !== ancestor && cur !== document.body) {
-      let seg = cur.tagName.toLowerCase();
-      const parent = cur.parentElement;
-      if (parent) {
-        const siblings = Array.from(parent.children).filter((c) => c.tagName === cur.tagName);
-        if (siblings.length > 1) {
-          const idx = siblings.indexOf(cur) + 1;
-          seg += `:nth-of-type(${idx})`;
-        }
-      }
-      segs.unshift(seg);
-      cur = parent;
-    }
-    return segs.join(' > ');
+    return buildPathFromAncestor(root, el);
   }
 
   function getAccessibleName(el) {
@@ -159,14 +1354,18 @@
         const labelEl = document.getElementById(labelledby);
         if (labelEl) return (labelEl.textContent || '').trim();
       }
+
       const ariaLabel = el.getAttribute('aria-label');
       if (ariaLabel) return ariaLabel.trim();
+
       if (el.id) {
         const label = document.querySelector(`label[for="${el.id}"]`);
         if (label) return (label.textContent || '').trim();
       }
+
       const parentLabel = el.closest('label');
       if (parentLabel) return (parentLabel.textContent || '').trim();
+
       return (
         el.getAttribute('placeholder') ||
         el.getAttribute('value') ||
@@ -178,611 +1377,10 @@
     }
   }
 
-  function ensureUi() {
-    if (!IS_MAIN) return null;
-    if (STATE.box) return STATE.box;
-    const box = document.createElement('div');
-    box.id = '__element_marker_overlay';
-    Object.assign(box.style, {
-      position: 'fixed',
-      top: '10px',
-      right: '10px',
-      zIndex: 2147483646,
-      fontFamily: 'system-ui,-apple-system,Segoe UI,Roboto,Arial',
-    });
-    box.innerHTML = `
-      <div style="background: rgba(17,24,39,0.92); color:#F9FAFB; padding:10px 12px; border-radius:8px; width: 360px; box-shadow:0 6px 18px rgba(0,0,0,0.3);">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
-          <strong>元素标注模式</strong>
-          <button id="__em_close" style="background:#dc2626; color:#fff; border:none; border-radius:6px; padding:4px 8px; cursor:pointer;">关闭</button>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:6px;">
-          <label style="font-size:12px; opacity:0.85;">名称</label>
-          <input id="__em_name" style="padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:#111827; color:#F9FAFB;" placeholder="如：登录按钮" />
-          <label style="font-size:12px; opacity:0.85;">选择器</label>
-          <input id="__em_selector" style="padding:6px 8px; border-radius:6px; border:1px solid rgba(255,255,255,0.2); background:#111827; color:#F9FAFB;" placeholder="点击页面元素自动填充" />
-          <div style="display:flex; gap:8px; margin-top:6px;">
-            <button id="__em_save" style="flex:1; background:#10b981; color:#111; border:none; border-radius:6px; padding:6px 8px; cursor:pointer;">保存</button>
-            <button id="__em_cancel" style="flex:1; background:#374151; color:#fff; border:none; border-radius:6px; padding:6px 8px; cursor:pointer;">取消</button>
-          </div>
-          <p style="font-size:12px; opacity:0.75; margin:6px 0 0;">提示：移动鼠标高亮元素，点击自动填充选择器</p>
-        </div>
-      </div>
-    `;
-    document.documentElement.appendChild(box);
-    const onClose = () => stop();
-    box.querySelector('#__em_close').addEventListener('click', onClose);
-    box.querySelector('#__em_cancel').addEventListener('click', onClose);
-    box.querySelector('#__em_save').addEventListener('click', () => save());
-    STATE.box = box;
-    return box;
-  }
+  // ============================================================================
+  // List Mode Utilities
+  // ============================================================================
 
-  function ensureHighlighter() {
-    if (STATE.highlighter) return STATE.highlighter;
-    const hl = document.createElement('div');
-    hl.id = '__element_marker_highlight';
-    Object.assign(hl.style, {
-      position: 'fixed',
-      zIndex: 2147483645,
-      pointerEvents: 'none',
-      border: '2px solid #10b981',
-      borderRadius: '4px',
-      boxShadow: '0 0 0 2px rgba(16,185,129,0.2)',
-    });
-    document.documentElement.appendChild(hl);
-    STATE.highlighter = hl;
-    return hl;
-  }
-
-  function ensureRectsHost() {
-    if (STATE.rectsHost) return STATE.rectsHost;
-    const host = document.createElement('div');
-    host.id = '__element_marker_rects';
-    Object.assign(host.style, {
-      position: 'fixed',
-      zIndex: 2147483644,
-      pointerEvents: 'none',
-      left: '0',
-      top: '0',
-      right: '0',
-      bottom: '0',
-    });
-    document.documentElement.appendChild(host);
-    STATE.rectsHost = host;
-    return host;
-  }
-
-  function clearRects() {
-    if (!STATE.rectsHost) return;
-    try {
-      STATE.rectsHost.innerHTML = '';
-    } catch {}
-  }
-
-  function moveHighlighterTo(el) {
-    const hl = ensureHighlighter();
-    const r = el.getBoundingClientRect();
-    hl.style.left = r.left + 'px';
-    hl.style.top = r.top + 'px';
-    hl.style.width = r.width + 'px';
-    hl.style.height = r.height + 'px';
-    hl.style.display = 'block';
-  }
-
-  function clearHighlighter() {
-    if (STATE.highlighter) STATE.highlighter.style.display = 'none';
-    clearRects();
-  }
-
-  function onMouseMove(ev) {
-    if (!STATE.active) return;
-    const target = ev.target;
-    if (!(target instanceof Element)) {
-      clearHighlighter();
-      return;
-    }
-    // Avoid interacting with the overlay itself
-    const box = STATE.box;
-    if (
-      box &&
-      (target === box || (target.closest && target.closest('#__element_marker_overlay')))
-    ) {
-      clearHighlighter();
-      return;
-    }
-    STATE.hoverEl = target;
-    if (!IS_MAIN) {
-      // Delegate to top for unified overlay
-      try {
-        const rects = [];
-        const list = STATE.listMode ? computeElementList(target) || [target] : [target];
-        for (const el of list) {
-          const r = el.getBoundingClientRect();
-          rects.push({ x: r.left, y: r.top, width: r.width, height: r.height });
-        }
-        window.top.postMessage(
-          { type: 'em_hover', rects, innerSel: generateSelector(target) },
-          '*',
-        );
-      } catch {}
-      return;
-    }
-    if (STATE.listMode) {
-      // compute siblings list
-      STATE.hoveredList = computeElementList(target) || [target];
-      // draw rects for list
-      const host = ensureRectsHost();
-      clearRects();
-      for (const el of STATE.hoveredList) {
-        const r = el.getBoundingClientRect();
-        const box = document.createElement('div');
-        Object.assign(box.style, {
-          position: 'fixed',
-          left: r.left + 'px',
-          top: r.top + 'px',
-          width: r.width + 'px',
-          height: r.height + 'px',
-          border: '2px dashed #22c55e',
-          borderRadius: '4px',
-          boxShadow: '0 0 0 2px rgba(34,197,94,0.15)',
-        });
-        host.appendChild(box);
-      }
-    } else {
-      moveHighlighterTo(target);
-    }
-  }
-
-  function onClick(ev) {
-    if (!STATE.active) return;
-    const target = ev.target;
-    const box = STATE.box;
-    if (
-      box &&
-      (target === box || (target.closest && target.closest('#__element_marker_overlay')))
-    ) {
-      return;
-    }
-    ev.preventDefault();
-    ev.stopPropagation();
-    if (!(target instanceof Element)) return;
-    if (!IS_MAIN) {
-      // Send inner selector to top
-      try {
-        const sel =
-          STATE.selectorType === 'xpath'
-            ? generateXPath(target)
-            : STATE.listMode
-              ? generateListSelector(target)
-              : generateSelector(target);
-        window.top.postMessage({ type: 'em_click', innerSel: sel }, '*');
-      } catch {}
-      return;
-    }
-    STATE.selectedEl = target;
-    const sel =
-      STATE.selectorType === 'xpath'
-        ? generateXPath(target)
-        : STATE.listMode
-          ? generateListSelector(target)
-          : generateSelector(target);
-    const name = getAccessibleName(target) || target.tagName.toLowerCase();
-    const inputSel = box?.querySelector('#__em_selector');
-    const inputName = box?.querySelector('#__em_name');
-    if (inputSel) inputSel.value = sel;
-    if (inputName && !inputName.value) inputName.value = name;
-    moveHighlighterTo(target);
-  }
-
-  function start() {
-    if (STATE.active) return;
-    STATE.active = true;
-    if (IS_MAIN) {
-      ensureUi();
-      ensureUiEnhancements();
-    }
-    ensureHighlighter();
-    ensureRectsHost();
-    window.addEventListener('mousemove', onMouseMove, true);
-    window.addEventListener('click', onClick, true);
-    window.addEventListener('keydown', onKeyDown, true);
-  }
-
-  function stop() {
-    STATE.active = false;
-    window.removeEventListener('mousemove', onMouseMove, true);
-    window.removeEventListener('click', onClick, true);
-    window.removeEventListener('keydown', onKeyDown, true);
-    try {
-      STATE.highlighter && STATE.highlighter.remove();
-    } catch {}
-    try {
-      STATE.rectsHost && STATE.rectsHost.remove();
-    } catch {}
-    try {
-      STATE.box && STATE.box.remove();
-    } catch {}
-    STATE.highlighter = null;
-    STATE.rectsHost = null;
-    STATE.box = null;
-    STATE.hoveredList = [];
-  }
-
-  async function save() {
-    try {
-      const name = STATE.box.querySelector('#__em_name').value.trim();
-      const selector = STATE.box.querySelector('#__em_selector').value.trim();
-      if (!selector) return;
-      const url = location.href;
-      let selectorType = STATE.selectorType;
-      if (STATE.listMode && selectorType === 'xpath') selectorType = 'css';
-      chrome.runtime.sendMessage(
-        {
-          type: 'element_marker_save',
-          marker: { url, name: name || selector, selector, selectorType },
-        },
-        function () {
-          /* ignore errors */
-        },
-      );
-    } catch {}
-    stop();
-  }
-
-  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
-    if (request && request.action === 'element_marker_start') {
-      start();
-      sendResponse({ ok: true });
-      return true;
-    } else if (request && request.action === 'element_marker_ping') {
-      sendResponse({ status: 'pong' });
-      return false;
-    }
-    return false;
-  });
-
-  // Cross-frame bridge: top collects child frame hover/click
-  if (IS_MAIN) {
-    window.addEventListener(
-      'message',
-      (ev) => {
-        try {
-          const data = ev && ev.data;
-          if (!data || !STATE.active) return;
-          const iframes = Array.from(document.querySelectorAll('iframe'));
-          const host = iframes.find((f) => {
-            try {
-              return f.contentWindow === ev.source;
-            } catch {
-              return false;
-            }
-          });
-          if (!host) return;
-          const base = host.getBoundingClientRect();
-          if (data.type === 'em_hover' && Array.isArray(data.rects)) {
-            const overlay = ensureRectsHost();
-            clearRects();
-            for (const r of data.rects) {
-              const box = document.createElement('div');
-              Object.assign(box.style, {
-                position: 'fixed',
-                left: base.left + r.x + 'px',
-                top: base.top + r.y + 'px',
-                width: r.width + 'px',
-                height: r.height + 'px',
-                border: '2px dashed #22c55e',
-                borderRadius: '4px',
-                boxShadow: '0 0 0 2px rgba(34,197,94,0.15)',
-              });
-              overlay.appendChild(box);
-            }
-          } else if (data.type === 'em_click' && data.innerSel) {
-            const frameSel = generateSelector(host);
-            const composite = frameSel ? `${frameSel} |> ${data.innerSel}` : data.innerSel;
-            const inputSel = STATE.box?.querySelector('#__em_selector');
-            if (inputSel) inputSel.value = composite;
-          }
-        } catch {}
-      },
-      true,
-    );
-  }
-
-  // --- UI enhancements: selector type toggle, list mode, verify and copy ---
-  function ensureUiEnhancements() {
-    const root = ensureUi();
-    if (!root) return;
-    // Add toolbar controls if not exists
-    if (root.querySelector('#__em_type_css')) return;
-    const row = document.createElement('div');
-    row.style.display = 'flex';
-    row.style.gap = '8px';
-    row.style.marginTop = '8px';
-    row.innerHTML = `
-      <div style="display:flex; align-items:center; gap:8px;">
-        <label style="font-size:12px; opacity:0.85;">类型:</label>
-        <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px;">
-          <input id="__em_type_css" name="__em_type" type="radio" value="css" checked /> CSS
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px;">
-          <input id="__em_type_xpath" name="__em_type" type="radio" value="xpath" /> XPath
-        </label>
-      </div>
-      <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; margin-left:auto;">
-        <input id="__em_list_mode" type="checkbox" /> 列表模式
-      </label>
-    `;
-    root.querySelector('div > div').appendChild(row);
-
-    const actions = document.createElement('div');
-    actions.style.display = 'flex';
-    actions.style.gap = '8px';
-    actions.style.marginTop = '8px';
-    actions.innerHTML = `
-      <div style="display:flex; align-items:center; gap:6px; flex: 2;">
-        <label style="font-size:12px; opacity:0.85;">验证动作:</label>
-        <select id="__em_action" style="flex:1; padding:4px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;">
-          <option value="hover">Hover</option>
-          <option value="left_click">Left click</option>
-          <option value="double_click">Double click</option>
-          <option value="right_click">Right click</option>
-          <option value="type_text">Type text</option>
-          <option value="press_keys">Press keys</option>
-          <option value="scroll">Scroll</option>
-        </select>
-        <input id="__em_action_text" placeholder="text/keys" style="flex:1; padding:4px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;" />
-      </div>
-      <div style="display:flex; align-items:center; gap:10px; flex-wrap: wrap;">
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <span>Button</span>
-          <select id="__em_btn" style="padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;">
-            <option value="left">Left</option>
-            <option value="middle">Middle</option>
-            <option value="right">Right</option>
-          </select>
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_opt_bubbles" type="checkbox" checked /> Bubbles
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_opt_cancelable" type="checkbox" checked /> Cancelable
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_mod_alt" type="checkbox" /> altKey
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_mod_ctrl" type="checkbox" /> ctrlKey
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_mod_meta" type="checkbox" /> metaKey
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_mod_shift" type="checkbox" /> shiftKey
-        </label>
-      </div>
-      <div id="__em_scroll_opts" style="display:flex; align-items:center; gap:10px; flex-wrap: wrap; margin-top:6px;">
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <span>Direction</span>
-          <select id="__em_scroll_dir" style="padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;">
-            <option value="down">Down</option>
-            <option value="up">Up</option>
-            <option value="left">Left</option>
-            <option value="right">Right</option>
-          </select>
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          amount(px):<input id="__em_scroll_amt" type="number" value="300" style="width:100px; padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;" />
-        </label>
-      </div>
-      <div id="__em_nav_opts" style="display:flex; align-items:center; gap:10px; flex-wrap: wrap; margin-top:6px;">
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_wait_nav" type="checkbox" /> 等待导航
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          timeout(ms):<input id="__em_nav_timeout" type="number" value="3000" style="width:120px; padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;" />
-        </label>
-      </div>
-      <div style="display:flex; align-items:center; gap:10px; flex-wrap: wrap; margin-top:6px;">
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          <input id="__em_use_abs" type="checkbox" /> 使用绝对坐标
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          dx:<input id="__em_dx" type="number" value="0" style="width:80px; padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;" />
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          dy:<input id="__em_dy" type="number" value="0" style="width:80px; padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;" />
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          x:<input id="__em_absx" type="number" value="0" style="width:80px; padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;" />
-        </label>
-        <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-          y:<input id="__em_absy" type="number" value="0" style="width:80px; padding:2px 6px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#F9FAFB;" />
-        </label>
-      </div>
-      <button id="__em_verify" style="flex:1; background:#60a5fa; color:#111; border:none; border-radius:6px; padding:6px 8px; cursor:pointer;">验证</button>
-      <button id="__em_copy" style="flex:1; background:#e5e7eb; color:#111; border:1px solid #d1d5db; border-radius:6px; padding:6px 8px; cursor:pointer;">复制</button>
-    `;
-    root.querySelector('div > div').appendChild(actions);
-
-    // Preferences row
-    const prefs = document.createElement('div');
-    prefs.style.display = 'flex';
-    prefs.style.gap = '12px';
-    prefs.style.marginTop = '6px';
-    prefs.innerHTML = `
-      <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-        <input id="__em_pref_id" type="checkbox" checked /> Prefer ID
-      </label>
-      <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-        <input id="__em_pref_attr" type="checkbox" checked /> Prefer data/name
-      </label>
-      <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px;">
-        <input id="__em_pref_class" type="checkbox" checked /> Prefer class
-      </label>
-    `;
-    root.querySelector('div > div').appendChild(prefs);
-
-    const typeCss = root.querySelector('#__em_type_css');
-    const typeXpath = root.querySelector('#__em_type_xpath');
-    const listModeChk = root.querySelector('#__em_list_mode');
-    typeCss.addEventListener('change', () => {
-      if (typeCss.checked) STATE.selectorType = 'css';
-    });
-    typeXpath.addEventListener('change', () => {
-      if (typeXpath.checked) STATE.selectorType = 'xpath';
-    });
-    listModeChk.addEventListener('change', () => {
-      STATE.listMode = !!listModeChk.checked;
-      clearHighlighter();
-    });
-    // Prefs handlers
-    const prefId = root.querySelector('#__em_pref_id');
-    const prefAttr = root.querySelector('#__em_pref_attr');
-    const prefClass = root.querySelector('#__em_pref_class');
-    prefId.addEventListener('change', () => (STATE.prefs.preferId = !!prefId.checked));
-    prefAttr.addEventListener('change', () => (STATE.prefs.preferStableAttr = !!prefAttr.checked));
-    prefClass.addEventListener('change', () => (STATE.prefs.preferClass = !!prefClass.checked));
-    root.querySelector('#__em_verify').addEventListener('click', verifySelectorNow);
-    root.querySelector('#__em_copy').addEventListener('click', copySelectorNow);
-    // Toggle visibility of options based on action
-    const actionSel = root.querySelector('#__em_action');
-    const navOpts = root.querySelector('#__em_nav_opts');
-    const scrollOpts = root.querySelector('#__em_scroll_opts');
-    const onActionChange = () => {
-      const val = actionSel.value;
-      const isClick = val === 'left_click' || val === 'double_click' || val === 'right_click';
-      navOpts.style.display = isClick ? 'flex' : 'none';
-      scrollOpts.style.display = val === 'scroll' ? 'flex' : 'none';
-    };
-    actionSel.addEventListener('change', onActionChange);
-    onActionChange();
-  }
-
-  function verifySelectorNow() {
-    try {
-      const sel = STATE.box.querySelector('#__em_selector').value.trim();
-      if (!sel) return;
-      // 1) Visual verification in content world for quick feedback
-      const matches = STATE.selectorType === 'xpath' ? evaluateXPathAll(sel) : queryAllDeep(sel);
-      clearRects();
-      const host = ensureRectsHost();
-      for (const el of matches) {
-        const r = el.getBoundingClientRect();
-        const box = document.createElement('div');
-        Object.assign(box.style, {
-          position: 'fixed',
-          left: r.left + 'px',
-          top: r.top + 'px',
-          width: r.width + 'px',
-          height: r.height + 'px',
-          border: '2px solid #3b82f6',
-          borderRadius: '4px',
-          boxShadow: '0 0 0 2px rgba(59,130,246,0.15)',
-        });
-        host.appendChild(box);
-      }
-      // 2) End-to-end validation via background using the same helper/tools pipeline
-      const action = document.getElementById('__em_action').value;
-      const actionText = document.getElementById('__em_action_text').value;
-      const payload = {
-        type: 'element_marker_validate',
-        selector: sel,
-        selectorType: STATE.selectorType,
-        action,
-      };
-      if (action === 'type_text') payload.text = actionText || '';
-      if (action === 'press_keys') payload.keys = actionText || '';
-      // include modifiers and event flags for click actions
-      payload.modifiers = {
-        altKey: !!document.getElementById('__em_mod_alt')?.checked,
-        ctrlKey: !!document.getElementById('__em_mod_ctrl')?.checked,
-        metaKey: !!document.getElementById('__em_mod_meta')?.checked,
-        shiftKey: !!document.getElementById('__em_mod_shift')?.checked,
-      };
-      payload.bubbles = !!document.getElementById('__em_opt_bubbles')?.checked;
-      payload.cancelable = !!document.getElementById('__em_opt_cancelable')?.checked;
-      payload.button = String(document.getElementById('__em_btn').value || 'left');
-      if (action === 'scroll') {
-        payload.scrollDirection = String(
-          document.getElementById('__em_scroll_dir').value || 'down',
-        );
-        const amt = Number(document.getElementById('__em_scroll_amt').value || 300);
-        if (Number.isFinite(amt)) payload.scrollAmount = amt;
-      }
-      if (action === 'left_click' || action === 'double_click' || action === 'right_click') {
-        payload.waitForNavigation = !!document.getElementById('__em_wait_nav')?.checked;
-        const tmo = Number(document.getElementById('__em_nav_timeout').value || 3000);
-        if (Number.isFinite(tmo)) payload.timeoutMs = tmo;
-      }
-      const useAbs = !!document.getElementById('__em_use_abs')?.checked;
-      if (useAbs) {
-        const ax = Number(document.getElementById('__em_absx').value || 0);
-        const ay = Number(document.getElementById('__em_absy').value || 0);
-        if (Number.isFinite(ax) && Number.isFinite(ay)) payload.coordinates = { x: ax, y: ay };
-        payload.relativeTo = 'viewport';
-      } else {
-        const dx = Number(document.getElementById('__em_dx').value || 0);
-        const dy = Number(document.getElementById('__em_dy').value || 0);
-        if (Number.isFinite(dx)) payload.offsetX = dx;
-        if (Number.isFinite(dy)) payload.offsetY = dy;
-        payload.relativeTo = 'element';
-      }
-      chrome.runtime.sendMessage(payload, function (_res) {
-        /* end-to-end validation */
-      });
-    } catch {}
-  }
-
-  function copySelectorNow() {
-    try {
-      const sel = STATE.box.querySelector('#__em_selector').value.trim();
-      if (!sel) return;
-      navigator.clipboard && navigator.clipboard.writeText(sel).catch(() => {});
-    } catch {}
-  }
-
-  // Ensure enhancements on load (top frame only)
-  if (IS_MAIN) setTimeout(ensureUiEnhancements, 0);
-
-  // Hotkeys: Space select, Esc close, ArrowUp/Down adjust ancestor/child
-  function setSelection(el) {
-    if (!(el instanceof Element)) return;
-    STATE.selectedEl = el;
-    const sel =
-      STATE.selectorType === 'xpath'
-        ? generateXPath(el)
-        : STATE.listMode
-          ? generateListSelector(el)
-          : generateSelector(el);
-    const name = getAccessibleName(el) || el.tagName.toLowerCase();
-    const inputSel = STATE.box.querySelector('#__em_selector');
-    const inputName = STATE.box.querySelector('#__em_name');
-    inputSel.value = sel;
-    if (!inputName.value) inputName.value = name;
-    moveHighlighterTo(el);
-  }
-  function onKeyDown(e) {
-    if (!STATE.active) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      stop();
-    } else if (e.key === ' ' || e.code === 'Space') {
-      e.preventDefault();
-      const t = STATE.hoverEl || STATE.selectedEl;
-      if (t) setSelection(t);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const base = STATE.selectedEl || STATE.hoverEl;
-      if (base && base.parentElement) setSelection(base.parentElement);
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const base = STATE.selectedEl || STATE.hoverEl;
-      if (base && base.firstElementChild) setSelection(base.firstElementChild);
-    }
-  }
-
-  // --- List utilities (simplified from Automa) ---
   function getAllSiblings(el, selector) {
     const siblings = [el];
     const validate = (element) => {
@@ -795,31 +1393,39 @@
       }
       return ok;
     };
-    let next = el,
-      prev = el;
+
+    let next = el;
+    let prev = el;
     let elementIndex = 1;
-    while ((prev = prev && prev.previousElementSibling)) {
+
+    while ((prev = prev?.previousElementSibling)) {
       if (validate(prev)) {
         elementIndex += 1;
         siblings.unshift(prev);
       }
     }
-    while ((next = next && next.nextElementSibling)) {
+
+    while ((next = next?.nextElementSibling)) {
       if (validate(next)) siblings.push(next);
     }
+
     return { elements: siblings, index: elementIndex };
   }
 
   function getElementList(el, maxDepth = 50, paths = []) {
     if (maxDepth === 0 || !el || el.tagName === 'BODY') return null;
+
     let selector = el.tagName.toLowerCase();
     const { elements, index } = getAllSiblings(el, paths.join(' > '));
     let siblings = elements;
+
     if (index !== 1) selector += `:nth-of-type(${index})`;
     paths.unshift(selector);
+
     if (siblings.length === 1) {
       siblings = getElementList(el.parentElement, maxDepth - 1, paths);
     }
+
     return siblings;
   }
 
@@ -831,134 +1437,50 @@
     }
   }
 
-  function generateListSelector(target) {
-    // Similar approach: choose parent as list anchor and produce child selector within
-    const list =
-      STATE.hoveredList && STATE.hoveredList.length
-        ? STATE.hoveredList
-        : computeElementList(target);
-    const selected = list && list[0] ? list[0] : target;
-    const parent = selected.parentElement || target.parentElement;
-    if (!parent) return generateSelector(target);
-    const parentSel = generateSelector(parent);
-    const childRel = generateSelectorWithinRoot(selected, parent);
-    return parentSel && childRel ? `${parentSel} ${childRel}` : generateSelector(target);
-  }
+  // ============================================================================
+  // Deep Query (Shadow DOM Support)
+  // ============================================================================
 
-  function generateSelectorWithinRoot(el, root) {
-    // Reduce scope to root for uniqueness checks
-    if (!(el instanceof Element)) return '';
-    const tag = el.tagName.toLowerCase();
-    // unique id under doc still valid
-    if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
-      return `#${CSS.escape(el.id)}`;
-    }
-    const attrNames = [
-      'data-testid',
-      'data-testId',
-      'data-test',
-      'data-qa',
-      'data-cy',
-      'name',
-      'title',
-      'alt',
-      'aria-label',
-    ];
-    for (const attr of attrNames) {
-      const v = el.getAttribute && el.getAttribute(attr);
-      if (!v) continue;
-      const aSel = `[${attr}="${CSS.escape(v)}"]`;
-      const testSel = /^(input|textarea|select)$/i.test(tag) ? `${tag}${aSel}` : aSel;
-      try {
-        if (root.querySelectorAll(testSel).length === 1) return testSel;
-      } catch {}
-    }
-    try {
-      const classes = Array.from(el.classList || []).filter((c) => c && /^[a-zA-Z0-9_-]+$/.test(c));
-      for (const cls of classes) {
-        const sel = `.${CSS.escape(cls)}`;
-        if (root.querySelectorAll(sel).length === 1) return sel;
-      }
-      const t = tag;
-      for (const cls of classes) {
-        const sel = `${t}.${CSS.escape(cls)}`;
-        if (root.querySelectorAll(sel).length === 1) return sel;
-      }
-    } catch {}
-    // fallback: relative path to root
-    const segs = [];
-    let cur = el;
-    while (cur && cur !== root && cur !== document.body) {
-      let seg = cur.tagName.toLowerCase();
-      const parent = cur.parentElement;
-      if (parent) {
-        const siblings = Array.from(parent.children).filter((c) => c.tagName === cur.tagName);
-        if (siblings.length > 1) {
-          const idx = siblings.indexOf(cur) + 1;
-          seg += `:nth-of-type(${idx})`;
-        }
-      }
-      segs.unshift(seg);
-      cur = parent;
-    }
-    return segs.join(' > ');
-  }
-
-  // --- XPath generator (basic, stable where possible) ---
-  function generateXPath(el) {
-    if (!(el instanceof Element)) return '';
-    if (el.id) return `//*[@id=${JSON.stringify(el.id)}]`;
-    const segs = [];
-    let cur = el;
-    while (cur && cur.nodeType === 1 && cur !== document.documentElement) {
-      const tag = cur.tagName.toLowerCase();
-      if (cur.id) {
-        segs.unshift(`//*[@id=${JSON.stringify(cur.id)}]`);
-        break;
-      }
-      let i = 1;
-      let sib = cur;
-      while ((sib = sib.previousElementSibling)) {
-        if (sib.tagName.toLowerCase() === tag) i++;
-      }
-      segs.unshift(`${tag}[${i}]`);
-      cur = cur.parentElement;
-    }
-    return segs[0]?.startsWith('//*') ? segs.join('/') : '//' + segs.join('/');
-  }
-
-  // --- Deep query across shadow roots (minimal) ---
   function* walkAllNodesDeep(root) {
     const stack = [root];
     let count = 0;
     const MAX = 10000;
+
     while (stack.length) {
       const node = stack.pop();
-      if (!node) continue;
-      if (++count > MAX) break;
+      if (!node || ++count > MAX) continue;
+
       yield node;
+
       try {
-        const children = node.children ? Array.from(node.children) : [];
-        for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
-        const any = node;
-        const sr = any && any.shadowRoot ? any.shadowRoot : null;
-        if (sr && sr.children) {
-          const srChildren = Array.from(sr.children);
-          for (let i = srChildren.length - 1; i >= 0; i--) stack.push(srChildren[i]);
+        if (node.children) {
+          const children = Array.from(node.children);
+          for (let i = children.length - 1; i >= 0; i--) {
+            stack.push(children[i]);
+          }
+        }
+
+        if (node.shadowRoot?.children) {
+          const srChildren = Array.from(node.shadowRoot.children);
+          for (let i = srChildren.length - 1; i >= 0; i--) {
+            stack.push(srChildren[i]);
+          }
         }
       } catch {}
     }
   }
+
   function queryAllDeep(selector) {
     const results = [];
     for (const node of walkAllNodesDeep(document)) {
       if (!(node instanceof Element)) continue;
       try {
-        if (node.matches && node.matches(selector)) results.push(node);
+        if (node.matches(selector)) results.push(node);
       } catch {}
     }
     return results;
   }
+
   function evaluateXPathAll(xpath) {
     try {
       const arr = [];
@@ -969,13 +1491,706 @@
         XPathResult.ORDERED_NODE_SNAPSHOT_TYPE,
         null,
       );
+
       for (let i = 0; i < res.snapshotLength; i++) {
         const n = res.snapshotItem(i);
-        if (n && n.nodeType === 1) arr.push(n);
+        if (n?.nodeType === 1) arr.push(n);
       }
       return arr;
     } catch {
       return [];
     }
   }
+
+  // ============================================================================
+  // Highlighter & Rects Management
+  // ============================================================================
+
+  const STATE = {
+    active: false,
+    hoverEl: null,
+    selectedEl: null,
+    box: null,
+    highlighter: null,
+    rectsHost: null,
+    hoveredList: [],
+  };
+
+  function ensureHighlighter() {
+    if (STATE.highlighter) return STATE.highlighter;
+
+    const hl = document.createElement('div');
+    hl.id = '__element_marker_highlight';
+    Object.assign(hl.style, {
+      position: 'fixed',
+      zIndex: String(CONFIG.Z_INDEX.HIGHLIGHTER),
+      pointerEvents: 'none',
+      border: `2px solid ${CONFIG.COLORS.HOVER}`,
+      borderRadius: '4px',
+      boxShadow: `0 0 0 2px ${CONFIG.COLORS.HOVER}33`,
+      transition: 'all 100ms ease-out',
+    });
+
+    document.documentElement.appendChild(hl);
+    STATE.highlighter = hl;
+    return hl;
+  }
+
+  function ensureRectsHost() {
+    if (STATE.rectsHost) return STATE.rectsHost;
+
+    const host = document.createElement('div');
+    host.id = '__element_marker_rects';
+    Object.assign(host.style, {
+      position: 'fixed',
+      zIndex: String(CONFIG.Z_INDEX.RECTS),
+      pointerEvents: 'none',
+      inset: '0',
+    });
+
+    document.documentElement.appendChild(host);
+    STATE.rectsHost = host;
+    return host;
+  }
+
+  function moveHighlighterTo(el) {
+    const hl = ensureHighlighter();
+    const r = el.getBoundingClientRect();
+    hl.style.left = `${r.left}px`;
+    hl.style.top = `${r.top}px`;
+    hl.style.width = `${r.width}px`;
+    hl.style.height = `${r.height}px`;
+    hl.style.display = 'block';
+  }
+
+  function clearHighlighter() {
+    if (STATE.highlighter) STATE.highlighter.style.display = 'none';
+    clearRects();
+  }
+
+  function clearRects() {
+    if (STATE.rectsHost) STATE.rectsHost.innerHTML = '';
+  }
+
+  function drawRects(elements, color = CONFIG.COLORS.HOVER, dashed = true) {
+    const host = ensureRectsHost();
+    clearRects();
+
+    for (const el of elements) {
+      const r = el.getBoundingClientRect();
+      const box = document.createElement('div');
+      Object.assign(box.style, {
+        position: 'fixed',
+        left: `${r.left}px`,
+        top: `${r.top}px`,
+        width: `${r.width}px`,
+        height: `${r.height}px`,
+        border: `2px ${dashed ? 'dashed' : 'solid'} ${color}`,
+        borderRadius: '4px',
+        boxShadow: `0 0 0 2px ${color}22`,
+        transition: 'all 100ms ease-out',
+      });
+      host.appendChild(box);
+    }
+  }
+
+  // ============================================================================
+  // Interaction Logic
+  // ============================================================================
+
+  function onMouseMove(ev) {
+    if (!STATE.active) return;
+
+    const target = ev.target;
+    if (!(target instanceof Element)) {
+      clearHighlighter();
+      return;
+    }
+
+    const host = PanelHost.getHost();
+    if (host && (target === host || target.closest?.('#__element_marker_overlay'))) {
+      clearHighlighter();
+      return;
+    }
+
+    STATE.hoverEl = target;
+
+    if (!IS_MAIN) {
+      try {
+        const listMode = StateStore.get('listMode');
+        const list = listMode ? computeElementList(target) || [target] : [target];
+        const rects = list.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.left, y: r.top, width: r.width, height: r.height };
+        });
+
+        window.top.postMessage(
+          {
+            type: 'em_hover',
+            rects,
+            innerSel: generateSelector(target),
+          },
+          '*',
+        );
+      } catch {}
+      return;
+    }
+
+    const listMode = StateStore.get('listMode');
+    if (listMode) {
+      STATE.hoveredList = computeElementList(target) || [target];
+      drawRects(STATE.hoveredList);
+    } else {
+      moveHighlighterTo(target);
+    }
+  }
+
+  function onClick(ev) {
+    if (!STATE.active) return;
+
+    const target = ev.target;
+    const host = PanelHost.getHost();
+
+    if (host && (target === host || target.closest?.('#__element_marker_overlay'))) {
+      return;
+    }
+
+    ev.preventDefault();
+    ev.stopPropagation();
+
+    if (!(target instanceof Element)) return;
+
+    if (!IS_MAIN) {
+      try {
+        const selectorType = StateStore.get('selectorType');
+        const listMode = StateStore.get('listMode');
+
+        const sel =
+          selectorType === 'xpath'
+            ? generateXPath(target)
+            : listMode
+              ? generateListSelector(target)
+              : generateSelector(target);
+
+        window.top.postMessage({ type: 'em_click', innerSel: sel }, '*');
+      } catch {}
+      return;
+    }
+
+    setSelection(target);
+  }
+
+  function onKeyDown(e) {
+    if (!STATE.active) return;
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      stop();
+    } else if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      const t = STATE.hoverEl || STATE.selectedEl;
+      if (t) setSelection(t);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const base = STATE.selectedEl || STATE.hoverEl;
+      if (base?.parentElement) setSelection(base.parentElement);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const base = STATE.selectedEl || STATE.hoverEl;
+      if (base?.firstElementChild) setSelection(base.firstElementChild);
+    }
+  }
+
+  function setSelection(el) {
+    if (!(el instanceof Element)) return;
+
+    STATE.selectedEl = el;
+
+    const selectorType = StateStore.get('selectorType');
+    const listMode = StateStore.get('listMode');
+
+    const sel =
+      selectorType === 'xpath'
+        ? generateXPath(el)
+        : listMode
+          ? generateListSelector(el)
+          : generateSelector(el);
+
+    const name = getAccessibleName(el) || el.tagName.toLowerCase();
+
+    const selectorText = STATE.box?.querySelector('#__em_selector');
+    const inputName = STATE.box?.querySelector('#__em_name');
+    const selectorDisplay = STATE.box?.querySelector('#__em_selector_text');
+
+    if (selectorText) selectorText.textContent = sel;
+    if (selectorDisplay) selectorDisplay.textContent = sel;
+    if (inputName && !inputName.value) inputName.value = name;
+
+    moveHighlighterTo(el);
+  }
+
+  // ============================================================================
+  // Validation Logic
+  // ============================================================================
+
+  async function verifySelectorNow() {
+    try {
+      const selector = STATE.box?.querySelector('#__em_selector')?.textContent?.trim();
+      if (!selector) return;
+
+      StateStore.set({
+        validation: { status: 'running', message: '正在验证...' },
+      });
+
+      const selectorType = StateStore.get('selectorType');
+      const listMode = StateStore.get('listMode');
+
+      const effectiveType = listMode ? 'css' : selectorType;
+
+      const matches =
+        effectiveType === 'xpath' ? evaluateXPathAll(selector) : queryAllDeep(selector);
+
+      drawRects(matches, CONFIG.COLORS.VERIFY, false);
+
+      const action = STATE.box?.querySelector('#__em_action')?.value || 'hover';
+
+      const payload = {
+        type: 'element_marker_validate',
+        selector,
+        selectorType: effectiveType,
+        action,
+      };
+
+      // Action-specific parameters
+      if (action === 'type_text') {
+        const actionText = STATE.box?.querySelector('#__em_action_text')?.value || '';
+        payload.text = actionText;
+      }
+
+      if (action === 'press_keys') {
+        const actionKeys = STATE.box?.querySelector('#__em_action_keys')?.value || '';
+        payload.keys = actionKeys;
+      }
+
+      if (action === 'scroll') {
+        const direction = STATE.box?.querySelector('#__em_scroll_direction')?.value || 'down';
+        const distance = Number(STATE.box?.querySelector('#__em_scroll_distance')?.value) || 300;
+        payload.scrollDirection = direction;
+        payload.scrollAmount = distance;
+      }
+
+      if (['left_click', 'double_click', 'right_click'].includes(action)) {
+        payload.modifiers = {
+          altKey: !!STATE.box?.querySelector('#__em_mod_alt')?.checked,
+          ctrlKey: !!STATE.box?.querySelector('#__em_mod_ctrl')?.checked,
+          metaKey: !!STATE.box?.querySelector('#__em_mod_meta')?.checked,
+          shiftKey: !!STATE.box?.querySelector('#__em_mod_shift')?.checked,
+        };
+        payload.button = STATE.box?.querySelector('#__em_btn')?.value || 'left';
+        payload.waitForNavigation = !!STATE.box?.querySelector('#__em_wait_nav')?.checked;
+        payload.timeoutMs = Number(STATE.box?.querySelector('#__em_nav_timeout')?.value) || 3000;
+      }
+
+      const res = await chrome.runtime.sendMessage(payload);
+
+      const success = !!res?.tool?.ok;
+      const newEntry = {
+        action,
+        success,
+        timestamp: Date.now(),
+        matchCount: matches.length,
+      };
+      const history = [...(StateStore.get('validationHistory') || []), newEntry].slice(-5);
+
+      if (res?.tool?.ok) {
+        StateStore.set({
+          validation: {
+            status: 'success',
+            message: `✓ 验证成功 (匹配 ${matches.length} 个元素)`,
+          },
+          validationHistory: history,
+        });
+      } else {
+        StateStore.set({
+          validation: {
+            status: 'failure',
+            message: res?.tool?.error || '验证失败',
+          },
+          validationHistory: history,
+        });
+      }
+    } catch (err) {
+      const newEntry = {
+        action: STATE.box?.querySelector('#__em_action')?.value || 'hover',
+        success: false,
+        timestamp: Date.now(),
+        matchCount: 0,
+      };
+      const history = [...(StateStore.get('validationHistory') || []), newEntry].slice(-5);
+
+      StateStore.set({
+        validation: {
+          status: 'failure',
+          message: `错误: ${err.message}`,
+        },
+        validationHistory: history,
+      });
+    }
+  }
+
+  function copySelectorNow() {
+    try {
+      const sel = STATE.box?.querySelector('#__em_selector')?.textContent?.trim();
+      if (!sel) return;
+      navigator.clipboard?.writeText(sel).catch(() => {});
+
+      StateStore.set({
+        validation: { status: 'success', message: '✓ 已复制到剪贴板' },
+      });
+
+      setTimeout(() => {
+        StateStore.set({ validation: { status: 'idle', message: '' } });
+      }, 2000);
+    } catch {}
+  }
+
+  async function save() {
+    try {
+      const name = STATE.box?.querySelector('#__em_name')?.value?.trim();
+      const selector = STATE.box?.querySelector('#__em_selector')?.textContent?.trim();
+
+      if (!selector) return;
+
+      const url = location.href;
+      let selectorType = StateStore.get('selectorType');
+      const listMode = StateStore.get('listMode');
+
+      if (listMode && selectorType === 'xpath') {
+        selectorType = 'css';
+      }
+
+      await chrome.runtime.sendMessage({
+        type: 'element_marker_save',
+        marker: {
+          url,
+          name: name || selector,
+          selector,
+          selectorType,
+        },
+      });
+    } catch {}
+
+    stop();
+  }
+
+  // ============================================================================
+  // Lifecycle Management
+  // ============================================================================
+
+  function start() {
+    if (STATE.active) return;
+    STATE.active = true;
+
+    if (IS_MAIN) {
+      const { host } = PanelHost.mount();
+      STATE.box = host;
+      StateStore.init();
+      bindControls();
+    }
+
+    ensureHighlighter();
+    ensureRectsHost();
+
+    window.addEventListener('mousemove', onMouseMove, true);
+    window.addEventListener('click', onClick, true);
+    window.addEventListener('keydown', onKeyDown, true);
+  }
+
+  function stop() {
+    STATE.active = false;
+
+    window.removeEventListener('mousemove', onMouseMove, true);
+    window.removeEventListener('click', onClick, true);
+    window.removeEventListener('keydown', onKeyDown, true);
+
+    try {
+      STATE.highlighter?.remove();
+      STATE.rectsHost?.remove();
+      PanelHost.unmount();
+      DragController.destroy();
+    } catch {}
+
+    STATE.highlighter = null;
+    STATE.rectsHost = null;
+    STATE.box = null;
+    STATE.hoveredList = [];
+    STATE.hoverEl = null;
+    STATE.selectedEl = null;
+  }
+
+  // ============================================================================
+  // Controls Binding
+  // ============================================================================
+
+  function bindControls() {
+    const host = STATE.box;
+    if (!host) return;
+
+    // Close/Cancel
+    host.querySelector('#__em_close')?.addEventListener('click', stop);
+    host.querySelector('#__em_cancel')?.addEventListener('click', stop);
+
+    // Save
+    host.querySelector('#__em_save')?.addEventListener('click', save);
+
+    // Validate & Copy
+    host.querySelector('#__em_validate')?.addEventListener('click', verifySelectorNow);
+    host.querySelector('#__em_copy')?.addEventListener('click', copySelectorNow);
+    host.querySelector('#__em_copy_selector')?.addEventListener('click', copySelectorNow);
+
+    // Action change handler - show/hide action-specific options
+    host.querySelector('#__em_action')?.addEventListener('change', (e) => {
+      updateActionSpecificUI(e.target.value);
+    });
+
+    // Selector type
+    host.querySelector('#__em_selector_type')?.addEventListener('change', (e) => {
+      const newType = e.target.value;
+      const listMode = StateStore.get('listMode');
+
+      // If switching to XPath while in list mode, disable list mode
+      if (newType === 'xpath' && listMode) {
+        StateStore.set({ selectorType: newType, listMode: false });
+      } else {
+        StateStore.set({ selectorType: newType });
+      }
+
+      // Regenerate selector for the currently selected element
+      if (STATE.selectedEl) {
+        setSelection(STATE.selectedEl);
+      }
+      // Note: If no selectedEl (e.g., iframe selections or manual input),
+      // preserve existing selector text instead of clearing it
+    });
+
+    // List mode toggle
+    host.querySelector('#__em_toggle_list')?.addEventListener('click', (e) => {
+      const listMode = StateStore.get('listMode');
+      const newListMode = !listMode;
+
+      // If enabling list mode, force CSS selector type
+      if (newListMode) {
+        StateStore.set({ listMode: true, selectorType: 'css' });
+        const selectorTypeSelect = host.querySelector('#__em_selector_type');
+        if (selectorTypeSelect) selectorTypeSelect.value = 'css';
+      } else {
+        StateStore.set({ listMode: false });
+      }
+
+      // Update button active state
+      const btn = e.currentTarget;
+      if (btn) {
+        if (newListMode) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      }
+
+      // Regenerate selector for the currently selected element
+      if (STATE.selectedEl) {
+        setSelection(STATE.selectedEl);
+      }
+
+      clearHighlighter();
+    });
+
+    // Tab toggle
+    host.querySelector('#__em_toggle_tab')?.addEventListener('click', () => {
+      const currentTab = StateStore.get('activeTab');
+      StateStore.set({ activeTab: currentTab === 'attributes' ? 'settings' : 'attributes' });
+    });
+
+    // Tab switching
+    const tabs = host.querySelectorAll('.em-tab');
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => {
+        StateStore.set({ activeTab: tab.dataset.tab });
+      });
+    });
+
+    // Navigation buttons
+    host.querySelector('#__em_nav_up')?.addEventListener('click', () => {
+      const base = STATE.selectedEl || STATE.hoverEl;
+      if (base?.parentElement) setSelection(base.parentElement);
+    });
+
+    host.querySelector('#__em_nav_down')?.addEventListener('click', () => {
+      const base = STATE.selectedEl || STATE.hoverEl;
+      if (base?.firstElementChild) setSelection(base.firstElementChild);
+    });
+
+    // Preferences
+    host.querySelector('#__em_pref_id')?.addEventListener('change', (e) => {
+      const prefs = { ...StateStore.get('prefs'), preferId: !!e.target.checked };
+      StateStore.set({ prefs });
+    });
+    host.querySelector('#__em_pref_attr')?.addEventListener('change', (e) => {
+      const prefs = { ...StateStore.get('prefs'), preferStableAttr: !!e.target.checked };
+      StateStore.set({ prefs });
+    });
+    host.querySelector('#__em_pref_class')?.addEventListener('change', (e) => {
+      const prefs = { ...StateStore.get('prefs'), preferClass: !!e.target.checked };
+      StateStore.set({ prefs });
+    });
+
+    // Drag - use entire header as drag handle
+    const dragHandle = host.querySelector('#__em_drag_handle');
+    if (dragHandle) {
+      DragController.init(dragHandle);
+    }
+
+    syncUIWithState();
+  }
+
+  function updateActionSpecificUI(action) {
+    const host = STATE.box;
+    if (!host) return;
+
+    // Hide all action-specific groups
+    const textGroup = host.querySelector('#__em_action_text_group');
+    const keysGroup = host.querySelector('#__em_action_keys_group');
+    const scrollOptions = host.querySelector('#__em_scroll_options');
+    const clickOptions = host.querySelector('#__em_click_options');
+
+    if (textGroup) textGroup.style.display = 'none';
+    if (keysGroup) keysGroup.style.display = 'none';
+    if (scrollOptions) scrollOptions.style.display = 'none';
+    if (clickOptions) clickOptions.style.display = 'none';
+
+    // Show relevant options based on action
+    if (action === 'type_text') {
+      if (textGroup) textGroup.style.display = 'block';
+    } else if (action === 'press_keys') {
+      if (keysGroup) keysGroup.style.display = 'block';
+    } else if (action === 'scroll') {
+      if (scrollOptions) scrollOptions.style.display = 'block';
+    } else if (['left_click', 'double_click', 'right_click'].includes(action)) {
+      if (clickOptions) clickOptions.style.display = 'block';
+
+      // For right_click, button selector is not relevant (always 'right')
+      // Hide the button field for right_click
+      const buttonField = host.querySelector('#__em_btn')?.closest('.em-field');
+      if (buttonField) {
+        buttonField.style.display = action === 'right_click' ? 'none' : 'block';
+      }
+    }
+    // hover: no extra options needed
+  }
+
+  function syncUIWithState() {
+    const host = STATE.box;
+    if (!host) return;
+
+    const state = StateStore.get();
+
+    const typeSelect = host.querySelector('#__em_selector_type');
+    if (typeSelect) typeSelect.value = state.selectorType;
+
+    // Initialize list mode button state
+    const listModeBtn = host.querySelector('#__em_toggle_list');
+    if (listModeBtn) {
+      if (state.listMode) {
+        listModeBtn.classList.add('active');
+      } else {
+        listModeBtn.classList.remove('active');
+      }
+    }
+
+    const prefId = host.querySelector('#__em_pref_id');
+    const prefAttr = host.querySelector('#__em_pref_attr');
+    const prefClass = host.querySelector('#__em_pref_class');
+    if (prefId) prefId.checked = state.prefs.preferId;
+    if (prefAttr) prefAttr.checked = state.prefs.preferStableAttr;
+    if (prefClass) prefClass.checked = state.prefs.preferClass;
+
+    // Initialize action-specific UI
+    const actionSelect = host.querySelector('#__em_action');
+    if (actionSelect) {
+      updateActionSpecificUI(actionSelect.value);
+    }
+  }
+
+  // ============================================================================
+  // Cross-Frame Bridge
+  // ============================================================================
+
+  if (IS_MAIN) {
+    window.addEventListener(
+      'message',
+      (ev) => {
+        try {
+          const data = ev?.data;
+          if (!data || !STATE.active) return;
+
+          const iframes = Array.from(document.querySelectorAll('iframe'));
+          const host = iframes.find((f) => {
+            try {
+              return f.contentWindow === ev.source;
+            } catch {
+              return false;
+            }
+          });
+
+          if (!host) return;
+
+          const base = host.getBoundingClientRect();
+
+          if (data.type === 'em_hover' && Array.isArray(data.rects)) {
+            const overlay = ensureRectsHost();
+            clearRects();
+
+            for (const r of data.rects) {
+              const box = document.createElement('div');
+              Object.assign(box.style, {
+                position: 'fixed',
+                left: `${base.left + r.x}px`,
+                top: `${base.top + r.y}px`,
+                width: `${r.width}px`,
+                height: `${r.height}px`,
+                border: `2px dashed ${CONFIG.COLORS.HOVER}`,
+                borderRadius: '4px',
+                boxShadow: `0 0 0 2px ${CONFIG.COLORS.HOVER}22`,
+              });
+              overlay.appendChild(box);
+            }
+          } else if (data.type === 'em_click' && data.innerSel) {
+            const frameSel = generateSelector(host);
+            const composite = frameSel ? `${frameSel} |> ${data.innerSel}` : data.innerSel;
+            const selectorText = STATE.box?.querySelector('#__em_selector');
+            const selectorDisplay = STATE.box?.querySelector('#__em_selector_text');
+            if (selectorText) selectorText.textContent = composite;
+            if (selectorDisplay) selectorDisplay.textContent = composite;
+          }
+        } catch {}
+      },
+      true,
+    );
+  }
+
+  // ============================================================================
+  // Message Handlers
+  // ============================================================================
+
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    if (request?.action === 'element_marker_start') {
+      start();
+      sendResponse({ ok: true });
+      return true;
+    } else if (request?.action === 'element_marker_ping') {
+      sendResponse({ status: 'pong' });
+      return false;
+    }
+    return false;
+  });
 })();

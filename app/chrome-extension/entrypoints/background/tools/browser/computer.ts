@@ -44,7 +44,9 @@ interface ComputerParams {
   duration?: number; // seconds for wait
   // For fill
   selector?: string;
+  selectorType?: 'css' | 'xpath'; // Type of selector (default: 'css')
   value?: string;
+  frameId?: number; // Target frame for selector/ref resolution
 }
 
 // Minimal CDP helper encapsulated here to avoid scattering CDP code
@@ -283,9 +285,11 @@ class ComputerTool extends BaseBrowserToolExecutor {
               await this.injectContentScript(tab.id, [
                 'inject-scripts/accessibility-tree-helper.js',
               ]);
+              const selectorType = params.selectorType || 'css';
               const ensured = await this.sendMessageToTab(tab.id, {
                 action: TOOL_MESSAGE_TYPES.ENSURE_REF_FOR_SELECTOR,
                 selector: params.selector,
+                isXPath: selectorType === 'xpath',
               });
               if (ensured && ensured.success) {
                 coord = project({ x: ensured.center.x, y: ensured.center.y });
@@ -374,11 +378,24 @@ class ComputerTool extends BaseBrowserToolExecutor {
               ref: params.ref,
               waitForNavigation: false,
               timeout: TIMEOUTS.DEFAULT_WAIT * 5,
+              button: params.action === 'right_click' ? 'right' : 'left',
+            });
+            return domResult;
+          }
+          if (params.selector) {
+            // Support selector-based click
+            const domResult = await clickTool.execute({
+              selector: params.selector,
+              selectorType: params.selectorType,
+              frameId: params.frameId,
+              waitForNavigation: false,
+              timeout: TIMEOUTS.DEFAULT_WAIT * 5,
+              button: params.action === 'right_click' ? 'right' : 'left',
             });
             return domResult;
           }
           if (!params.coordinates)
-            return createErrorResponse('Coordinate parameter is required for click action');
+            return createErrorResponse('Provide ref, selector, or coordinates for click action');
           {
             const stale = ((): any => {
               const getHostname = (url: string): string => {
@@ -463,8 +480,10 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
         case 'double_click':
         case 'triple_click': {
-          if (!params.coordinates && !params.ref)
-            return createErrorResponse('Provide ref or coordinates for double/triple click');
+          if (!params.coordinates && !params.ref && !params.selector)
+            return createErrorResponse(
+              'Provide ref, selector, or coordinates for double/triple click',
+            );
           let coord = params.coordinates ? project(params.coordinates)! : (undefined as any);
           // If ref is provided, resolve center via accessibility helper
           if (params.ref) {
@@ -482,8 +501,30 @@ class ComputerTool extends BaseBrowserToolExecutor {
             } catch (e) {
               // ignore and use provided coordinates
             }
+          } else if (params.selector) {
+            // Support selector-based click
+            try {
+              await this.injectContentScript(tab.id, [
+                'inject-scripts/accessibility-tree-helper.js',
+              ]);
+              const selectorType = params.selectorType || 'css';
+              const ensured = await this.sendMessageToTab(
+                tab.id,
+                {
+                  action: TOOL_MESSAGE_TYPES.ENSURE_REF_FOR_SELECTOR,
+                  selector: params.selector,
+                  isXPath: selectorType === 'xpath',
+                },
+                params.frameId,
+              );
+              if (ensured && ensured.success) {
+                coord = project({ x: ensured.center.x, y: ensured.center.y })!;
+              }
+            } catch (e) {
+              // ignore
+            }
           }
-          if (!coord) return createErrorResponse('Failed to resolve coordinates from ref');
+          if (!coord) return createErrorResponse('Failed to resolve coordinates from ref/selector');
           {
             const stale = ((): any => {
               if (!params.coordinates) return null;
@@ -795,6 +836,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
           // Reuse existing fill tool to leverage robust DOM event behavior
           const res = await fillTool.execute({
             selector: params.selector as any,
+            selectorType: params.selectorType as any,
             ref: params.ref as any,
             value: params.value as any,
           } as any);
