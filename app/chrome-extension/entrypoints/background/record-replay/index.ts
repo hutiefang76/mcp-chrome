@@ -20,6 +20,7 @@ import { STORAGE_KEYS } from '@/common/constants';
 import { listTriggers, saveTrigger, deleteTrigger, type FlowTrigger } from './trigger-store';
 import { runFlow } from './flow-runner';
 import { RecorderManager } from './recording/recorder-manager';
+import { recordingSession } from './recording/session-manager';
 // Browser/content listeners are initialized via RecorderManager.init
 
 // design note: background listener for record & replay; delegates recording to dedicated modules
@@ -90,6 +91,29 @@ export function initRecordReplayListeners() {
           stopRecording()
             .then(sendResponse)
             .catch((e) => sendResponse({ success: false, error: e?.message || String(e) }));
+          return true;
+        }
+        case BACKGROUND_MESSAGE_TYPES.RR_PAUSE_RECORDING: {
+          RecorderManager.pause()
+            .then(sendResponse)
+            .catch((e) => sendResponse({ success: false, error: e?.message || String(e) }));
+          return true;
+        }
+        case BACKGROUND_MESSAGE_TYPES.RR_RESUME_RECORDING: {
+          RecorderManager.resume()
+            .then(sendResponse)
+            .catch((e) => sendResponse({ success: false, error: e?.message || String(e) }));
+          return true;
+        }
+        case BACKGROUND_MESSAGE_TYPES.RR_GET_RECORDING_STATUS: {
+          const status = recordingSession.getStatus();
+          const session = recordingSession.getSession();
+          sendResponse({
+            success: true,
+            status,
+            sessionId: session.sessionId,
+            originTabId: session.originTabId,
+          });
           return true;
         }
         case BACKGROUND_MESSAGE_TYPES.RR_LIST_FLOWS: {

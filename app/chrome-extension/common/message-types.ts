@@ -24,6 +24,9 @@ export const BACKGROUND_MESSAGE_TYPES = {
   // Record & Replay background control and queries
   RR_START_RECORDING: 'rr_start_recording',
   RR_STOP_RECORDING: 'rr_stop_recording',
+  RR_PAUSE_RECORDING: 'rr_pause_recording',
+  RR_RESUME_RECORDING: 'rr_resume_recording',
+  RR_GET_RECORDING_STATUS: 'rr_get_recording_status',
   RR_LIST_FLOWS: 'rr_list_flows',
   RR_GET_FLOW: 'rr_get_flow',
   RR_DELETE_FLOW: 'rr_delete_flow',

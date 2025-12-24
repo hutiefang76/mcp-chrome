@@ -1,7 +1,83 @@
-import type { Flow, RunRecord } from './types';
+import type { Flow, RunRecord, NodeBase, Edge } from './types';
+import { stepsToDAG, type RRNode, type RREdge } from 'chrome-mcp-shared';
+import { NODE_TYPES } from '@/common/node-types';
 import { IndexedDbStorage } from './storage/indexeddb-manager';
 
 // design note: simple local storage backed store for flows and run records
+
+// Validate if a type string is a valid NodeType
+const VALID_NODE_TYPES = new Set<string>(Object.values(NODE_TYPES));
+function isValidNodeType(type: string): boolean {
+  return VALID_NODE_TYPES.has(type);
+}
+
+// Convert RRNode to NodeBase (ui coordinates are optional, not added here)
+function toNodeBase(node: RRNode): NodeBase {
+  return {
+    id: node.id,
+    type: isValidNodeType(node.type) ? (node.type as NodeBase['type']) : NODE_TYPES.SCRIPT,
+    config: node.config,
+  };
+}
+
+// Convert RREdge to Edge
+function toEdge(edge: RREdge): Edge {
+  return {
+    id: edge.id,
+    from: edge.from,
+    to: edge.to,
+    label: edge.label,
+  };
+}
+
+/**
+ * Filter edges to only keep those whose from/to both exist in nodeIds.
+ * Prevents topoOrder crash when edges reference non-existent nodes.
+ */
+function filterValidEdges(edges: Edge[], nodeIds: Set<string>): Edge[] {
+  return edges.filter((e) => nodeIds.has(e.from) && nodeIds.has(e.to));
+}
+
+/**
+ * Normalize flow before saving: ensure nodes/edges exist for scheduler compatibility.
+ * Only generates DAG from steps if nodes are missing or empty.
+ * Preserves existing nodes/edges to avoid overwriting user edits.
+ */
+function normalizeFlowForSave(flow: Flow): Flow {
+  const hasNodes = Array.isArray(flow.nodes) && flow.nodes.length > 0;
+  if (hasNodes) {
+    return flow;
+  }
+
+  // No nodes - generate from steps
+  if (!Array.isArray(flow.steps) || flow.steps.length === 0) {
+    return flow;
+  }
+
+  const dag = stepsToDAG(flow.steps);
+  if (dag.nodes.length === 0) {
+    return flow;
+  }
+
+  const nodes: NodeBase[] = dag.nodes.map(toNodeBase);
+  const nodeIds = new Set(nodes.map((n) => n.id));
+
+  // Validate existing edges: only keep if from/to both exist in new nodes
+  // Otherwise fall back to generated chain edges
+  let edges: Edge[];
+  if (Array.isArray(flow.edges) && flow.edges.length > 0) {
+    const validEdges = filterValidEdges(flow.edges, nodeIds);
+    edges = validEdges.length > 0 ? validEdges : dag.edges.map(toEdge);
+  } else {
+    edges = dag.edges.map(toEdge);
+  }
+
+  return {
+    ...flow,
+    nodes,
+    edges,
+  };
+}
 
 export interface PublishedFlowInfo {
   id: string;
@@ -11,16 +87,65 @@ export interface PublishedFlowInfo {
   description?: string;
 }
 
+/**
+ * Check if a flow needs normalization (missing nodes when steps exist).
+ */
+function needsNormalization(flow: Flow): boolean {
+  const hasSteps = Array.isArray(flow.steps) && flow.steps.length > 0;
+  const hasNodes = Array.isArray(flow.nodes) && flow.nodes.length > 0;
+  return hasSteps && !hasNodes;
+}
+
+/**
+ * Lazy normalize a flow if needed, and persist the normalized version.
+ * This handles legacy flows that only have steps but no nodes.
+ */
+async function lazyNormalize(flow: Flow): Promise<Flow> {
+  if (!needsNormalization(flow)) {
+    return flow;
+  }
+  // Normalize and save back to storage
+  const normalized = normalizeFlowForSave(flow);
+  try {
+    await IndexedDbStorage.flows.save(normalized);
+  } catch (e) {
+    console.warn('lazyNormalize: failed to save normalized flow', e);
+  }
+  return normalized;
+}
+
 export async function listFlows(): Promise<Flow[]> {
-  return await IndexedDbStorage.flows.list();
+  const flows = await IndexedDbStorage.flows.list();
+  // Check if any flows need normalization
+  const needsNorm = flows.some(needsNormalization);
+  if (!needsNorm) {
+    return flows;
+  }
+  // Normalize flows that need it (in parallel)
+  const normalized = await Promise.all(
+    flows.map(async (flow) => {
+      if (needsNormalization(flow)) {
+        return lazyNormalize(flow);
+      }
+      return flow;
+    }),
+  );
+  return normalized;
 }
 
 export async function getFlow(flowId: string): Promise<Flow | undefined> {
-  return await IndexedDbStorage.flows.get(flowId);
+  const flow = await IndexedDbStorage.flows.get(flowId);
+  if (!flow) return undefined;
+  // Lazy normalize if needed
+  if (needsNormalization(flow)) {
+    return lazyNormalize(flow);
+  }
+  return flow;
 }
 
 export async function saveFlow(flow: Flow): Promise<void> {
-  await IndexedDbStorage.flows.save(flow);
+  const normalizedFlow = normalizeFlowForSave(flow);
+  await IndexedDbStorage.flows.save(normalizedFlow);
 }
 
 export async function deleteFlow(flowId: string): Promise<void> {

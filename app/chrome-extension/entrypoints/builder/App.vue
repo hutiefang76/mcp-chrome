@@ -250,7 +250,6 @@ import { BACKGROUND_MESSAGE_TYPES } from '@/common/message-types';
 import type { Flow as FlowV2 } from '@/entrypoints/background/record-replay/types';
 
 import { useBuilderStore } from '@/entrypoints/popup/components/builder/store/useBuilderStore';
-import { nodesToSteps } from '@/entrypoints/popup/components/builder/model/transforms';
 import { validateFlow } from '@/entrypoints/popup/components/builder/model/validation';
 import Canvas from '@/entrypoints/popup/components/builder/components/Canvas.vue';
 import Sidebar from '@/entrypoints/popup/components/builder/components/Sidebar.vue';
@@ -410,12 +409,14 @@ function applyRename() {
 }
 
 async function save() {
-  if (store.isEditingMain()) store.flowLocal.steps = nodesToSteps(store.nodes, store.edges);
-  const result = JSON.parse(
-    JSON.stringify({ ...store.flowLocal, nodes: store.nodes, edges: store.edges }),
-  );
+  // Use exportFlowForSave to properly handle subflow editing:
+  // - Flushes current canvas state back to flowLocal (including subflow edits)
+  // - Generates steps from main flow nodes/edges
+  // - Returns deep copy with correct nodes/edges from flowLocal
+  const result = store.exportFlowForSave();
   await chrome.runtime.sendMessage({ type: BACKGROUND_MESSAGE_TYPES.RR_SAVE_FLOW, flow: result });
   try {
+    // Use main flow nodes for trigger sync (not current canvas which may be subflow)
     await syncTriggersAndSchedules(result.id, result.nodes || []);
   } catch {}
 }
@@ -604,7 +605,9 @@ function importFromSteps() {
   store.importFromSteps();
 }
 function exportToSteps() {
-  store.flowLocal.steps = nodesToSteps(store.nodes, store.edges);
+  // Use exportFlowForSave to properly handle subflow editing
+  const flow = store.exportFlowForSave();
+  store.flowLocal.steps = flow.steps;
 }
 
 // Hotkeys

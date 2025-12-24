@@ -1055,17 +1055,23 @@ const SHADOW_HOST_STYLES = /* css */ `
    * Container handles hover/focus-within styling instead of input itself.
    * ========================================================================== */
   .we-input-container {
-    flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
-    height: 28px; /* Design spec: h-[28px] */
+    height: 28px; /* Design spec: h-[28px] - must be explicit, not flex-controlled */
+    flex-shrink: 0; /* Prevent height shrinking in column flex containers */
     padding: 0 8px;
     gap: 4px;
     background: var(--we-control-bg);
     border: 1px solid transparent;
     border-radius: var(--we-radius-control);
     transition: background 0.1s ease, border-color 0.1s ease, box-shadow 0.1s ease;
+  }
+
+  /* In row flex containers, allow input-container to grow horizontally */
+  .we-field-row > .we-input-container,
+  .we-radius-control .we-field-row > .we-input-container {
+    flex: 1 1 0;
   }
 
   .we-input-container:hover:not(:focus-within) {
@@ -1296,6 +1302,30 @@ const SHADOW_HOST_STYLES = /* css */ `
   .we-alignment-grid__bar--3 { width: 4px; }
 
   /* ==========================================================================
+   * Grid + Gap Two Column Layout (Layout Control)
+   * ========================================================================== */
+
+  .we-grid-gap-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .we-grid-gap-col {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Hide labels only when both columns are visible (grid mode) */
+  .we-grid-gap-col:not([hidden]) + .we-grid-gap-col:not([hidden]) .we-field-label,
+  .we-grid-gap-col:not([hidden]):has(+ .we-grid-gap-col:not([hidden])) .we-field-label {
+    display: none;
+  }
+
+  .we-grid-gap-col .we-field-content {
+    width: 100%;
+  }
+
+  /* ==========================================================================
    * Grid Dimensions Picker (Layout Control)
    * ========================================================================== */
 
@@ -1476,11 +1506,30 @@ const SHADOW_HOST_STYLES = /* css */ `
 
   .we-spacing-header {
     font-size: 10px;
+    font-weight: 600;
     color: #6b7280;
   }
 
   /* Spacing 2x2 grid layout */
   .we-spacing-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  /* ==========================================================================
+   * Border Radius Control
+   * ========================================================================== */
+
+  .we-radius-control {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .we-radius-corners-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
@@ -1977,6 +2026,146 @@ const SHADOW_HOST_STYLES = /* css */ `
   }
 
   /* ==========================================================================
+   * Token Pill (Phase 5.3)
+   *
+   * Compact pill UI for displaying a CSS var() reference in input fields.
+   * Used when ColorField value is a standalone var(--token) expression.
+   * ========================================================================== */
+
+  .we-token-pill {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px 0 4px;
+    background: var(--we-control-bg);
+    border: 1px solid transparent;
+    border-radius: var(--we-radius-control);
+    transition: background 0.1s ease, border-color 0.1s ease;
+  }
+
+  .we-token-pill:hover:not([data-disabled="true"]) {
+    border-color: var(--we-control-border-hover);
+  }
+
+  .we-token-pill:focus-within {
+    background: var(--we-control-bg-focus);
+    border-color: var(--we-control-border-focus);
+  }
+
+  .we-token-pill[data-disabled="true"] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  .we-token-pill[hidden] {
+    display: none;
+  }
+
+  /* Leading slot: holds external element (ColorField swatch) or internal swatch */
+  .we-token-pill__leading {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
+  /* Internal swatch (used when no external leading element provided) */
+  .we-token-pill__swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: transparent;
+  }
+
+  /* Main clickable area */
+  .we-token-pill__main {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--we-text-primary);
+    cursor: pointer;
+    font-size: 11px;
+    text-align: left;
+  }
+
+  .we-token-pill__main:focus {
+    outline: none;
+  }
+
+  .we-token-pill__main:disabled {
+    cursor: default;
+  }
+
+  /* Token name with ellipsis */
+  .we-token-pill__name {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+  }
+
+  /* Link icon (rotated 45° to indicate variable binding) */
+  .we-token-pill__icon {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+    color: var(--we-text-muted);
+    transform: rotate(45deg);
+  }
+
+  /* Clear button (hover to reveal) */
+  .we-token-pill__clear {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--we-text-muted);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+  }
+
+  .we-token-pill:hover .we-token-pill__clear {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .we-token-pill__clear:hover {
+    background: rgba(15, 23, 42, 0.06);
+    color: var(--we-text-primary);
+  }
+
+  .we-token-pill__clear:focus {
+    outline: none;
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .we-token-pill__clear:disabled {
+    cursor: default;
+  }
+
+  /* ==========================================================================
      Props Panel (Phase 7.3)
      ========================================================================== */
 
@@ -2225,6 +2414,72 @@ const SHADOW_HOST_STYLES = /* css */ `
   .we-color-text {
     flex: 1;
     min-width: 0;
+  }
+
+  /* ==========================================================================
+   * Tooltip (data-tooltip)
+   *
+   * CSS-only tooltips using the data-tooltip attribute.
+   * Shows on hover/focus with minimal delay.
+   * ========================================================================== */
+
+  [data-tooltip] {
+    position: relative;
+  }
+
+  [data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 8px;
+    font-size: 11px;
+    font-family: inherit;
+    font-weight: 400;
+    line-height: 1.3;
+    white-space: nowrap;
+    color: var(--we-surface-bg);
+    background-color: var(--we-text-primary);
+    border-radius: var(--we-radius-control);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 100ms ease,
+      visibility 100ms ease;
+    pointer-events: none;
+    z-index: 99999;
+  }
+
+  [data-tooltip]::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 2px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 4px solid transparent;
+    border-top-color: var(--we-text-primary);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 100ms ease,
+      visibility 100ms ease;
+    pointer-events: none;
+    z-index: 99999;
+  }
+
+  [data-tooltip]:hover::after,
+  [data-tooltip]:focus-visible::after,
+  [data-tooltip]:focus-within::after {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  [data-tooltip]:hover::before,
+  [data-tooltip]:focus-visible::before,
+  [data-tooltip]:focus-within::before {
+    opacity: 1;
+    visibility: visible;
   }
 
   /* ==========================================================================

@@ -5,8 +5,8 @@ import { expandTemplatesDeep } from '../rr-utils';
 import type { ExecCtx, ExecResult, NodeRuntime } from './types';
 
 export const scrollNode: NodeRuntime<StepScroll> = {
-  run: async (_ctx, step: StepScroll) => {
-    const s = expandTemplatesDeep(step as StepScroll, {});
+  run: async (ctx, step: StepScroll) => {
+    const s = expandTemplatesDeep(step as StepScroll, ctx.vars);
     const top = s.offset?.y ?? undefined;
     const left = s.offset?.x ?? undefined;
     const selectorFromTarget = (s as any).target?.candidates?.find(

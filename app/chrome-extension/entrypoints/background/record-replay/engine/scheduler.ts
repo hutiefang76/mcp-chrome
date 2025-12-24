@@ -46,6 +46,7 @@ class ExecutionOrchestrator {
   private networkCaptureStarted = false;
   private paused = false;
   private failed = 0;
+  private executed = 0; // Count of actually executed steps (not skipped/trigger)
   private steps: Step[] = [];
   private prepareError: RunResult | null = null;
   private afterScripts = new AfterScriptQueue(this.logger);
@@ -110,7 +111,7 @@ class ExecutionOrchestrator {
       const steps0: Step[] = hasDag0 ? order0.map((n) => mapDagNodeToStep(n)) : [];
       const nav = steps0.find((s) => s.type === STEP_TYPES.NAVIGATE);
       if (nav && nav.type === STEP_TYPES.NAVIGATE)
-        derivedStartUrl = expandTemplatesDeep(nav.url, {});
+        derivedStartUrl = expandTemplatesDeep(nav.url, this.vars);
     } catch {
       // ignore: best-effort derive startUrl
     }
@@ -326,7 +327,8 @@ class ExecutionOrchestrator {
     }
     const defaultEdges = defaultEdgesOnly(edges);
     const order = topoOrder(nodes, defaultEdges);
-    this.steps = order.map((n) => mapDagNodeToStep(n));
+    // Filter out trigger nodes - they are configuration nodes, not executable steps
+    this.steps = order.filter((n) => n.type !== STEP_TYPES.TRIGGER).map((n) => mapDagNodeToStep(n));
     // initialize runners
     this.subflowRunner = new SubflowRunner({
       runId: this.runId,
@@ -397,18 +399,42 @@ class ExecutionOrchestrator {
     }
     const indeg = new Map<string, number>(nodes.map((n) => [n.id, 0] as const));
     for (const e of edges) indeg.set(e.to, (indeg.get(e.to) || 0) + 1);
-    let currentId =
+    // Find start node: prefer non-trigger nodes with indeg=0
+    // Trigger nodes are configuration nodes and should be skipped
+    const findFirstExecutableRoot = (): string | undefined => {
+      // First try to find a non-trigger root node
+      const executableRoot = nodes.find(
+        (n) => (indeg.get(n.id) || 0) === 0 && n.type !== STEP_TYPES.TRIGGER,
+      );
+      if (executableRoot) return executableRoot.id;
+
+      // If all roots are triggers, find one and follow default edge to first executable
+      const triggerRoot = nodes.find((n) => (indeg.get(n.id) || 0) === 0);
+      if (triggerRoot) {
+        const defaultEdge = (outEdges.get(triggerRoot.id) || []).find(
+          (e) => !e.label || e.label === ENGINE_CONSTANTS.EDGE_LABELS.DEFAULT,
+        );
+        if (defaultEdge) return defaultEdge.to;
+      }
+
+      // Fallback to first node
+      return nodes[0]?.id;
+    };
+
+    let currentId: string | undefined =
       this.options.startNodeId && id2node.has(this.options.startNodeId)
         ? this.options.startNodeId
-        : nodes.find((n: any) => (indeg.get(n.id) || 0) === 0)?.id || nodes[0]?.id;
+        : findFirstExecutableRoot();
     let guard = 0;
     const ctx: ExecCtx = { vars: this.vars, logger: (e: RunLogEntry) => this.logger.push(e) };
-    try {
-      await this.logger.overlayAppend(
-        `▶ start at ${id2node.get(currentId)?.type || ''} (${currentId})`,
-      );
-    } catch {
-      // ignore: eval condition failure treated as false
+    if (currentId) {
+      try {
+        await this.logger.overlayAppend(
+          `▶ start at ${id2node.get(currentId)?.type || ''} (${currentId})`,
+        );
+      } catch {
+        // ignore: eval condition failure treated as false
+      }
     }
     while (currentId) {
       this.ensureWithinDeadline();
@@ -423,6 +449,29 @@ class ExecutionOrchestrator {
       }
       const node = id2node.get(currentId);
       if (!node) break;
+
+      // Skip trigger nodes - they are configuration nodes, not executable steps
+      // Follow default edge to the next executable node
+      if (node.type === STEP_TYPES.TRIGGER) {
+        try {
+          await this.logger.overlayAppend(`⏭ skip trigger (${node.id})`);
+        } catch {}
+        const defaultEdge = (outEdges.get(currentId) || []).find(
+          (e) => !e.label || e.label === ENGINE_CONSTANTS.EDGE_LABELS.DEFAULT,
+        );
+        if (defaultEdge) {
+          currentId = defaultEdge.to;
+          continue;
+        }
+        // No successor after trigger - end execution
+        this.logger.push({
+          stepId: node.id,
+          status: 'warning',
+          message: 'Trigger node has no successor - nothing to execute',
+        });
+        break;
+      }
+
       const step: Step = mapDagNodeToStep(node);
       // lightweight trace to aid debugging edge traversal
       try {
@@ -430,6 +479,9 @@ class ExecutionOrchestrator {
       } catch {
         // ignore: stopping network capture is best-effort
       }
+      // Count this step as executed (regardless of success/failure)
+      this.executed++;
+
       const r = await this.stepRunner.run(
         ctx,
         step,
@@ -482,8 +534,8 @@ class ExecutionOrchestrator {
       runId: this.runId,
       success: !this.paused && this.failed === 0,
       summary: {
-        total: this.steps.length,
-        success: this.steps.length - this.failed,
+        total: this.executed,
+        success: this.executed - this.failed,
         failed: this.failed,
         tookMs,
       },

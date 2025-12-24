@@ -8,7 +8,6 @@ export const TOOL_NAMES = {
     SCREENSHOT: 'chrome_screenshot',
     CLOSE_TABS: 'chrome_close_tabs',
     SWITCH_TAB: 'chrome_switch_tab',
-    GO_BACK_OR_FORWARD: 'chrome_go_back_or_forward',
     WEB_FETCHER: 'chrome_get_web_content',
     CLICK: 'chrome_click_element',
     FILL: 'chrome_fill_or_select',
@@ -165,6 +164,16 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Filter elements: "interactive" for such as  buttons/links/inputs only (default: all visible elements)',
         },
+        depth: {
+          type: 'number',
+          description:
+            'Maximum DOM depth to traverse (integer >= 0). Lower values reduce output size and can improve performance.',
+        },
+        refId: {
+          type: 'string',
+          description:
+            'Focus on the subtree rooted at this element refId (e.g., "ref_12"). The refId must come from a recent chrome_read_page response in the same tab (refs may expire).',
+        },
         tabId: {
           type: 'number',
           description: 'Target an existing tab by ID (default: active tab).',
@@ -193,12 +202,12 @@ export const TOOL_SCHEMAS: Tool[] = [
         action: {
           type: 'string',
           description:
-            'Action to perform: left_click | right_click | double_click | triple_click | left_click_drag | scroll | type | key | fill | hover | wait | screenshot',
+            'Action to perform: left_click | right_click | double_click | triple_click | left_click_drag | scroll | scroll_to | type | key | fill | fill_form | hover | wait | resize_page | zoom | screenshot',
         },
         ref: {
           type: 'string',
           description:
-            'Element ref from chrome_read_page. For click/scroll/key/type and drag end when provided; takes precedence over coordinates.',
+            'Element ref from chrome_read_page. For click/scroll/scroll_to/key/type and drag end when provided; takes precedence over coordinates.',
         },
         coordinates: {
           type: 'object',
@@ -233,6 +242,34 @@ export const TOOL_SCHEMAS: Tool[] = [
           type: 'string',
           description:
             'Text to type (for action=type) or keys/chords separated by space (for action=key, e.g. "Backspace Enter" or "cmd+a")',
+        },
+        repeat: {
+          type: 'number',
+          description:
+            'For action=key: number of times to repeat the key sequence (integer 1-100, default 1).',
+        },
+        modifiers: {
+          type: 'object',
+          description:
+            'Modifier keys for click actions (left_click/right_click/double_click/triple_click).',
+          properties: {
+            altKey: { type: 'boolean' },
+            ctrlKey: { type: 'boolean' },
+            metaKey: { type: 'boolean' },
+            shiftKey: { type: 'boolean' },
+          },
+        },
+        region: {
+          type: 'object',
+          description:
+            'For action=zoom: rectangular region to capture (x0,y0)-(x1,y1) in viewport pixels (or screenshot-space if a recent screenshot context exists).',
+          properties: {
+            x0: { type: 'number' },
+            y0: { type: 'number' },
+            x1: { type: 'number' },
+            y1: { type: 'number' },
+          },
+          required: ['x0', 'y0', 'x1', 'y1'],
         },
         // For action=fill
         selector: {
@@ -354,11 +391,16 @@ export const TOOL_SCHEMAS: Tool[] = [
   // },
   {
     name: TOOL_NAMES.BROWSER.NAVIGATE,
-    description: 'Navigate to a URL or refresh the current tab',
+    description:
+      'Navigate to a URL, refresh the current tab, or navigate browser history (back/forward)',
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'URL to navigate to the website specified' },
+        url: {
+          type: 'string',
+          description:
+            'URL to navigate to. Special values: "back" or "forward" to navigate browser history in the target tab.',
+        },
         newWindow: {
           type: 'boolean',
           description: 'Create a new window to navigate to the URL or not. Defaults to false',
@@ -366,7 +408,7 @@ export const TOOL_SCHEMAS: Tool[] = [
         tabId: {
           type: 'number',
           description:
-            'Target an existing tab by ID (if provided, navigate/refresh that tab instead of the active tab).',
+            'Target an existing tab by ID (if provided, navigate/refresh/back/forward that tab instead of the active tab).',
         },
         windowId: {
           type: 'number',
@@ -378,16 +420,16 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Perform the operation without stealing focus (do not activate the tab or focus the window). Default: false',
         },
-        // width: {
-        //   type: 'number',
-        //   description:
-        //     'Viewport width in pixels (default: 1280). Note: when both width and height are provided, a new window will be created regardless of newWindow=false.',
-        // },
-        // height: {
-        //   type: 'number',
-        //   description:
-        //     'Viewport height in pixels (default: 720). Note: when both width and height are provided, a new window will be created regardless of newWindow=false.',
-        // },
+        width: {
+          type: 'number',
+          description:
+            'Window width in pixels (default: 1280). When width or height is provided, a new window will be created.',
+        },
+        height: {
+          type: 'number',
+          description:
+            'Window height in pixels (default: 720). When width or height is provided, a new window will be created.',
+        },
         refresh: {
           type: 'boolean',
           description:
@@ -474,20 +516,6 @@ export const TOOL_SCHEMAS: Tool[] = [
         },
       },
       required: ['tabId'],
-    },
-  },
-  {
-    name: TOOL_NAMES.BROWSER.GO_BACK_OR_FORWARD,
-    description: 'Navigate back or forward in browser history',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        isForward: {
-          type: 'boolean',
-          description: 'Go forward in history if true, go back if false (default: false)',
-        },
-      },
-      required: [],
     },
   },
   {

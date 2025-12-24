@@ -522,12 +522,13 @@
    * Traverse DOM and build pageContent lines; collect ref map for interactive nodes.
    * @param {Element} el
    * @param {number} depth
-   * @param {{filter?: 'all'|'interactive'}} cfg
+   * @param {{filter?: 'all'|'interactive', maxDepth?: number}} cfg
    * @param {string[]} out
    * @param {Array<{ref:string, selector:string, rect:{x:number,y:number,width:number,height:number}}>} refMap
    */
   function traverse(el, depth, cfg, out, refMap, state) {
-    if (depth > MAX_DEPTH || !el || !el.tagName) return;
+    const maxDepth = cfg && typeof cfg.maxDepth === 'number' ? cfg.maxDepth : MAX_DEPTH;
+    if (depth > maxDepth || !el || !el.tagName) return;
     if (state.processed >= MAX_NODES) return;
     if (state.visited.has(el)) return;
     state.visited.add(el);
@@ -591,17 +592,17 @@
     }
     if (state.processed >= MAX_NODES) return;
     // Traverse light DOM children
-    if (/** @type {HTMLElement} */ (el).children && depth < MAX_DEPTH) {
+    if (/** @type {HTMLElement} */ (el).children && depth < maxDepth) {
       const children = /** @type {HTMLElement} */ (el).children;
       for (let i = 0; i < children.length; i++) {
         if (state.processed >= MAX_NODES) break;
         traverse(children[i], include ? depth + 1 : depth, cfg, out, refMap, state);
       }
     }
-    // Traverse shadow DOM roots (limited by MAX_DEPTH and MAX_NODES)
+    // Traverse shadow DOM roots (limited by maxDepth and MAX_NODES)
     try {
       const anyEl = /** @type {any} */ (el);
-      if (anyEl && anyEl.shadowRoot && depth < MAX_DEPTH) {
+      if (anyEl && anyEl.shadowRoot && depth < maxDepth) {
         const srChildren = anyEl.shadowRoot.children || [];
         for (let i = 0; i < srChildren.length; i++) {
           if (state.processed >= MAX_NODES) break;
@@ -616,15 +617,39 @@
   /**
    * Generate tree and return
    * @param {'all'|'interactive'|null} filter
+   * @param {{maxDepth?: number, refId?: string}|undefined} options
    */
-  function __generateAccessibilityTree(filter) {
+  function __generateAccessibilityTree(filter, options) {
     try {
       const start = performance && performance.now ? performance.now() : Date.now();
       const out = [];
       const cfg = { filter: filter || undefined };
+
+      // Clamp maxDepth to MAX_DEPTH to keep costs bounded
+      if (options && Number.isFinite(options.maxDepth)) {
+        const d = Math.max(0, Math.floor(Number(options.maxDepth)));
+        cfg.maxDepth = Math.min(d, MAX_DEPTH);
+      }
+
       const refMap = [];
       const state = { processed: 0, included: 0, visited: new WeakSet() };
-      if (document.body) traverse(document.body, 0, cfg, out, refMap, state);
+
+      // Determine root element (body or refId-specified element)
+      let focus = null;
+      let root = document.body;
+      if (options && options.refId) {
+        const refIdStr = String(options.refId || '').trim();
+        if (refIdStr) {
+          const el = resolveRef(refIdStr);
+          if (!el || !(el instanceof Element)) {
+            return { error: `ref "${refIdStr}" not found or expired` };
+          }
+          root = el;
+          focus = { refId: refIdStr };
+        }
+      }
+
+      if (root) traverse(root, 0, cfg, out, refMap, state);
       for (const k in window.__claudeElementMap) {
         if (!window.__claudeElementMap[k].deref || !window.__claudeElementMap[k].deref())
           delete window.__claudeElementMap[k];
@@ -635,6 +660,7 @@
       const end = performance && performance.now ? performance.now() : Date.now();
       return {
         pageContent,
+        focus,
         viewport: {
           width: window.innerWidth,
           height: window.innerHeight,
@@ -1006,7 +1032,14 @@
         }
       }
       if (request && request.action === 'generateAccessibilityTree') {
-        const result = __generateAccessibilityTree(request.filter || null);
+        const result = __generateAccessibilityTree(request.filter || null, {
+          maxDepth: request.depth,
+          refId: request.refId,
+        });
+        if (result && result.error) {
+          sendResponse({ success: false, error: result.error });
+          return true;
+        }
         sendResponse({ success: true, ...result });
         return true;
       }
@@ -1047,8 +1080,20 @@
                   });
                   return true;
                 }
-                // Bridge to child frame via postMessage
+                // Bridge to child frame via postMessage with timeout
                 const reqId = `rrc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const BRIDGE_TIMEOUT_MS = 5000; // 5 second timeout for iframe bridge
+                let responded = false;
+                let timeoutHandle = null;
+
+                const cleanup = () => {
+                  window.removeEventListener('message', listener, true);
+                  if (timeoutHandle) {
+                    clearTimeout(timeoutHandle);
+                    timeoutHandle = null;
+                  }
+                };
+
                 const listener = (ev) => {
                   try {
                     const data = ev && ev.data;
@@ -1058,7 +1103,13 @@
                       data.reqId !== reqId
                     )
                       return;
-                    window.removeEventListener('message', listener, true);
+                    // Validate source is the expected frame (security check)
+                    if (ev.source !== cw) return;
+
+                    if (responded) return; // Already timed out
+                    responded = true;
+                    cleanup();
+
                     if (data.success) {
                       sendResponse({
                         success: true,
@@ -1070,10 +1121,29 @@
                       sendResponse({ success: false, error: data.error || 'child failed' });
                     }
                   } catch (e) {
-                    window.removeEventListener('message', listener, true);
-                    sendResponse({ success: false, error: String(e && e.message ? e.message : e) });
+                    if (!responded) {
+                      responded = true;
+                      cleanup();
+                      sendResponse({
+                        success: false,
+                        error: String(e && e.message ? e.message : e),
+                      });
+                    }
                   }
                 };
+
+                // Set up timeout to prevent infinite wait
+                timeoutHandle = setTimeout(() => {
+                  if (!responded) {
+                    responded = true;
+                    cleanup();
+                    sendResponse({
+                      success: false,
+                      error: `iframe bridge timeout after ${BRIDGE_TIMEOUT_MS}ms`,
+                    });
+                  }
+                }, BRIDGE_TIMEOUT_MS);
+
                 window.addEventListener('message', listener, true);
                 cw.postMessage(
                   {

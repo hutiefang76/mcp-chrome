@@ -77,6 +77,46 @@ class NavigateTool extends BaseBrowserToolExecutor {
         return createErrorResponse('URL parameter is required when refresh is not true');
       }
 
+      // Handle history navigation: url="back" or url="forward"
+      if (url === 'back' || url === 'forward') {
+        const explicitTab = await this.tryGetTab(tabId);
+        const targetTab = explicitTab || (await this.getActiveTabOrThrowInWindow(windowId));
+        if (!targetTab.id) {
+          return createErrorResponse('No target tab found for history navigation');
+        }
+
+        // Respect background flag for focus behavior
+        await this.ensureFocus(targetTab, {
+          activate: background !== true,
+          focusWindow: background !== true,
+        });
+
+        if (url === 'forward') {
+          await chrome.tabs.goForward(targetTab.id);
+          console.log(`Navigated forward in tab ID: ${targetTab.id}`);
+        } else {
+          await chrome.tabs.goBack(targetTab.id);
+          console.log(`Navigated back in tab ID: ${targetTab.id}`);
+        }
+
+        const updatedTab = await chrome.tabs.get(targetTab.id);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                message: `Successfully navigated ${url} in browser history`,
+                tabId: updatedTab.id,
+                windowId: updatedTab.windowId,
+                url: updatedTab.url,
+              }),
+            },
+          ],
+          isError: false,
+        };
+      }
+
       // 1. Check if URL is already open
       // Prefer Chrome's URL match patterns for robust matching (host/path variations)
       console.log(`Checking if URL is already open: ${url}`);
@@ -540,74 +580,6 @@ class CloseTabsTool extends BaseBrowserToolExecutor {
 }
 
 export const closeTabsTool = new CloseTabsTool();
-
-interface GoBackOrForwardToolParams {
-  isForward?: boolean;
-}
-
-/**
- * Tool for navigating back or forward in browser history
- */
-class GoBackOrForwardTool extends BaseBrowserToolExecutor {
-  name = TOOL_NAMES.BROWSER.GO_BACK_OR_FORWARD;
-
-  async execute(args: GoBackOrForwardToolParams): Promise<ToolResult> {
-    const { isForward = false } = args;
-
-    console.log(`Attempting to navigate ${isForward ? 'forward' : 'back'} in browser history`);
-
-    try {
-      // Get current active tab
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-      if (!activeTab || !activeTab.id) {
-        return createErrorResponse('No active tab found');
-      }
-
-      // Navigate back or forward based on the isForward parameter
-      if (isForward) {
-        await chrome.tabs.goForward(activeTab.id);
-        console.log(`Navigated forward in tab ID: ${activeTab.id}`);
-      } else {
-        await chrome.tabs.goBack(activeTab.id);
-        console.log(`Navigated back in tab ID: ${activeTab.id}`);
-      }
-
-      // Get updated tab information
-      const updatedTab = await chrome.tabs.get(activeTab.id);
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: true,
-              message: `Successfully navigated ${isForward ? 'forward' : 'back'} in browser history`,
-              tabId: updatedTab.id,
-              windowId: updatedTab.windowId,
-              url: updatedTab.url,
-            }),
-          },
-        ],
-        isError: false,
-      };
-    } catch (error) {
-      if (chrome.runtime.lastError) {
-        console.error(`Chrome API Error: ${chrome.runtime.lastError.message}`, error);
-        return createErrorResponse(`Chrome API Error: ${chrome.runtime.lastError.message}`);
-      } else {
-        console.error('Error in GoBackOrForwardTool.execute:', error);
-        return createErrorResponse(
-          `Error navigating ${isForward ? 'forward' : 'back'}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-  }
-}
-
-export const goBackOrForwardTool = new GoBackOrForwardTool();
 
 interface SwitchTabToolParams {
   tabId: number;

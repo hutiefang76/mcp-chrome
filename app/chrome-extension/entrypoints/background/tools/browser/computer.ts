@@ -16,6 +16,20 @@ interface Coordinates {
   y: number;
 }
 
+interface ZoomRegion {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface Modifiers {
+  altKey?: boolean;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  shiftKey?: boolean;
+}
+
 interface ComputerParams {
   action:
     | 'left_click'
@@ -31,6 +45,8 @@ interface ComputerParams {
     | 'fill'
     | 'fill_form'
     | 'resize_page'
+    | 'scroll_to'
+    | 'zoom'
     | 'screenshot';
   // click/scroll coordinates in screenshot space (if screenshot context exists) or viewport space
   coordinates?: Coordinates; // for click/scroll; for drag, this is endCoordinates
@@ -41,6 +57,9 @@ interface ComputerParams {
   scrollDirection?: 'up' | 'down' | 'left' | 'right';
   scrollAmount?: number;
   text?: string; // for type/key
+  repeat?: number; // for key action (1-100)
+  modifiers?: Modifiers; // for click actions
+  region?: ZoomRegion; // for zoom action
   duration?: number; // seconds for wait
   // For fill
   selector?: string;
@@ -376,6 +395,16 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
         case 'left_click':
         case 'right_click': {
+          // Calculate CDP modifier mask for click events
+          const modifiersMask = CDPHelper.modifierMask(
+            [
+              params.modifiers?.altKey ? 'alt' : undefined,
+              params.modifiers?.ctrlKey ? 'ctrl' : undefined,
+              params.modifiers?.metaKey ? 'meta' : undefined,
+              params.modifiers?.shiftKey ? 'shift' : undefined,
+            ].filter((v): v is string => typeof v === 'string'),
+          );
+
           if (params.ref) {
             // Prefer DOM click via ref
             const domResult = await clickTool.execute({
@@ -383,6 +412,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
               waitForNavigation: false,
               timeout: TIMEOUTS.DEFAULT_WAIT * 5,
               button: params.action === 'right_click' ? 'right' : 'left',
+              modifiers: params.modifiers,
             });
             return domResult;
           }
@@ -395,6 +425,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
               waitForNavigation: false,
               timeout: TIMEOUTS.DEFAULT_WAIT * 5,
               button: params.action === 'right_click' ? 'right' : 'left',
+              modifiers: params.modifiers,
             });
             return domResult;
           }
@@ -427,6 +458,8 @@ class ComputerTool extends BaseBrowserToolExecutor {
             coordinates: coord,
             waitForNavigation: false,
             timeout: TIMEOUTS.DEFAULT_WAIT * 5,
+            button: params.action === 'right_click' ? 'right' : 'left',
+            modifiers: params.modifiers,
           });
           if (!domResult.isError) {
             return domResult; // Standardized response from click tool
@@ -442,6 +475,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
               y: coord.y,
               button: 'none',
               buttons: 0,
+              modifiers: modifiersMask,
             });
             for (let i = 1; i <= clickCount; i++) {
               await CDPHelper.dispatchMouseEvent(tab.id, {
@@ -451,6 +485,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
                 button,
                 buttons: button === 'left' ? 1 : 2,
                 clickCount: i,
+                modifiers: modifiersMask,
               });
               await CDPHelper.dispatchMouseEvent(tab.id, {
                 type: 'mouseReleased',
@@ -459,6 +494,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
                 button,
                 buttons: 0,
                 clickCount: i,
+                modifiers: modifiersMask,
               });
             }
             await CDPHelper.detach(tab.id);
@@ -484,6 +520,16 @@ class ComputerTool extends BaseBrowserToolExecutor {
         }
         case 'double_click':
         case 'triple_click': {
+          // Calculate CDP modifier mask for click events
+          const modifiersMask = CDPHelper.modifierMask(
+            [
+              params.modifiers?.altKey ? 'alt' : undefined,
+              params.modifiers?.ctrlKey ? 'ctrl' : undefined,
+              params.modifiers?.metaKey ? 'meta' : undefined,
+              params.modifiers?.shiftKey ? 'shift' : undefined,
+            ].filter((v): v is string => typeof v === 'string'),
+          );
+
           if (!params.coordinates && !params.ref && !params.selector)
             return createErrorResponse(
               'Provide ref, selector, or coordinates for double/triple click',
@@ -561,6 +607,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
               y: coord.y,
               button: 'none',
               buttons: 0,
+              modifiers: modifiersMask,
             });
             for (let i = 1; i <= clickCount; i++) {
               await CDPHelper.dispatchMouseEvent(tab.id, {
@@ -570,6 +617,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
                 button,
                 buttons: 1,
                 clickCount: i,
+                modifiers: modifiersMask,
               });
               await CDPHelper.dispatchMouseEvent(tab.id, {
                 type: 'mouseReleased',
@@ -578,6 +626,7 @@ class ComputerTool extends BaseBrowserToolExecutor {
                 button,
                 buttons: 0,
                 clickCount: i,
+                modifiers: modifiersMask,
               });
             }
             await CDPHelper.detach(tab.id);
@@ -898,6 +947,12 @@ class ComputerTool extends BaseBrowserToolExecutor {
               'text is required for key action (e.g., "Backspace Backspace Enter" or "cmd+a")',
             );
           const tokens = params.text.trim().split(/\s+/).filter(Boolean);
+          const repeat = params.repeat ?? 1;
+          if (!Number.isInteger(repeat) || repeat < 1 || repeat > 100) {
+            return createErrorResponse(
+              'repeat must be an integer between 1 and 100 for key action',
+            );
+          }
           try {
             // Optional focus via ref before key events
             if (params.ref) {
@@ -908,16 +963,18 @@ class ComputerTool extends BaseBrowserToolExecutor {
               });
             }
             await CDPHelper.attach(tab.id);
-            for (const t of tokens) {
-              if (t.includes('+')) await CDPHelper.dispatchKeyChord(tab.id, t);
-              else await CDPHelper.dispatchSimpleKey(tab.id, t);
+            for (let i = 0; i < repeat; i++) {
+              for (const t of tokens) {
+                if (t.includes('+')) await CDPHelper.dispatchKeyChord(tab.id, t);
+                else await CDPHelper.dispatchSimpleKey(tab.id, t);
+              }
             }
             await CDPHelper.detach(tab.id);
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({ success: true, action: 'key', keys: tokens }),
+                  text: JSON.stringify({ success: true, action: 'key', keys: tokens, repeat }),
                 },
               ],
               isError: false,
@@ -926,7 +983,9 @@ class ComputerTool extends BaseBrowserToolExecutor {
             await CDPHelper.detach(tab.id);
             // Fallback to DOM keyboard simulation (comma-separated combinations)
             const keysStr = tokens.join(',');
-            const res = await keyboardTool.execute({ keys: keysStr });
+            const repeatedKeys =
+              repeat === 1 ? keysStr : Array.from({ length: repeat }, () => keysStr).join(',');
+            const res = await keyboardTool.execute({ keys: repeatedKeys });
             return res;
           }
         }
@@ -996,6 +1055,147 @@ class ComputerTool extends BaseBrowserToolExecutor {
               ],
               isError: false,
             };
+          }
+        }
+        case 'scroll_to': {
+          if (!params.ref) {
+            return createErrorResponse('ref is required for scroll_to action');
+          }
+          try {
+            await this.injectContentScript(tab.id, ['inject-scripts/accessibility-tree-helper.js']);
+            const resp = await this.sendMessageToTab(tab.id, {
+              action: 'focusByRef',
+              ref: params.ref,
+            });
+            if (!resp || resp.success !== true) {
+              return createErrorResponse(resp?.error || 'scroll_to failed: element not found');
+            }
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    action: 'scroll_to',
+                    ref: params.ref,
+                  }),
+                },
+              ],
+              isError: false,
+            };
+          } catch (e) {
+            return createErrorResponse(
+              `scroll_to failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
+        }
+        case 'zoom': {
+          const region = params.region;
+          if (!region) {
+            return createErrorResponse('region is required for zoom action');
+          }
+          const x0 = Number(region.x0);
+          const y0 = Number(region.y0);
+          const x1 = Number(region.x1);
+          const y1 = Number(region.y1);
+          if (![x0, y0, x1, y1].every(Number.isFinite)) {
+            return createErrorResponse('region must contain finite numbers (x0, y0, x1, y1)');
+          }
+          if (x0 < 0 || y0 < 0 || x1 <= x0 || y1 <= y0) {
+            return createErrorResponse('Invalid region: require x0>=0, y0>=0 and x1>x0, y1>y0');
+          }
+
+          // Project coordinates from screenshot space to viewport space
+          const p0 = project({ x: x0, y: y0 })!;
+          const p1 = project({ x: x1, y: y1 })!;
+          const rx0 = Math.min(p0.x, p1.x);
+          const ry0 = Math.min(p0.y, p1.y);
+          const rx1 = Math.max(p0.x, p1.x);
+          const ry1 = Math.max(p0.y, p1.y);
+          const w = rx1 - rx0;
+          const h = ry1 - ry0;
+          if (w <= 0 || h <= 0) {
+            return createErrorResponse('Invalid region after projection');
+          }
+
+          // Security check: verify domain hasn't changed since last screenshot
+          {
+            const getHostname = (url: string): string => {
+              try {
+                return new URL(url).hostname;
+              } catch {
+                return '';
+              }
+            };
+            const ctx = screenshotContextManager.getContext(tab.id!);
+            const contextHostname = (ctx as any)?.hostname as string | undefined;
+            const currentHostname = getHostname(tab.url || '');
+            if (contextHostname && contextHostname !== currentHostname) {
+              return createErrorResponse(
+                `Security check failed: Domain changed since last screenshot (from ${contextHostname} to ${currentHostname}) during zoom. Capture a new screenshot first.`,
+              );
+            }
+          }
+
+          try {
+            await CDPHelper.attach(tab.id);
+            const metrics: any = await CDPHelper.send(tab.id, 'Page.getLayoutMetrics', {});
+            const viewport = metrics?.layoutViewport ||
+              metrics?.visualViewport || {
+                clientWidth: 800,
+                clientHeight: 600,
+                pageX: 0,
+                pageY: 0,
+              };
+            const vw = Math.round(Number(viewport.clientWidth || 800));
+            const vh = Math.round(Number(viewport.clientHeight || 600));
+            if (rx1 > vw || ry1 > vh) {
+              await CDPHelper.detach(tab.id);
+              return createErrorResponse(
+                `Region exceeds viewport boundaries (${vw}x${vh}). Choose a region within the visible viewport.`,
+              );
+            }
+            const pageX = Number(viewport.pageX || 0);
+            const pageY = Number(viewport.pageY || 0);
+
+            const shot: any = await CDPHelper.send(tab.id, 'Page.captureScreenshot', {
+              format: 'png',
+              captureBeyondViewport: false,
+              fromSurface: true,
+              clip: {
+                x: pageX + rx0,
+                y: pageY + ry0,
+                width: w,
+                height: h,
+                scale: 1,
+              },
+            });
+            await CDPHelper.detach(tab.id);
+
+            const base64Data = String(shot?.data || '');
+            if (!base64Data) {
+              return createErrorResponse('Failed to capture zoom screenshot via CDP');
+            }
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    success: true,
+                    action: 'zoom',
+                    mimeType: 'image/png',
+                    base64Data,
+                    region: { x0: rx0, y0: ry0, x1: rx1, y1: ry1 },
+                  }),
+                },
+              ],
+              isError: false,
+            };
+          } catch (e) {
+            await CDPHelper.detach(tab.id);
+            return createErrorResponse(
+              `zoom failed: ${e instanceof Error ? e.message : String(e)}`,
+            );
           }
         }
         case 'screenshot': {

@@ -403,6 +403,28 @@ export function useBuilderStore(initial?: FlowV2 | null) {
     return nodesToSteps(nodes, edges);
   }
 
+  /**
+   * Export flow for saving. This properly handles subflow editing:
+   * 1. Flushes current canvas state back to flowLocal
+   * 2. Generates steps from main flow nodes/edges
+   * 3. Returns a deep copy to avoid reference issues
+   *
+   * IMPORTANT: Always use this method for saving instead of directly
+   * accessing store.nodes/edges, which may contain subflow data.
+   */
+  function exportFlowForSave(): FlowV2 {
+    // Step 1: Flush current canvas state to flowLocal
+    flushCurrent();
+
+    // Step 2: Generate steps from main flow (not current canvas which may be subflow)
+    const mainNodes = flowLocal.nodes || [];
+    const mainEdges = flowLocal.edges || [];
+    flowLocal.steps = nodesToSteps(mainNodes as any, mainEdges as any);
+
+    // Step 3: Return deep copy to prevent mutation
+    return JSON.parse(JSON.stringify(flowLocal));
+  }
+
   function summarize(id?: string) {
     const n = nodes.find((x) => x.id === id);
     return summarizeNode(n || null);
@@ -600,6 +622,7 @@ export function useBuilderStore(initial?: FlowV2 | null) {
     isEditingMain,
     importFromSteps,
     exportSteps,
+    exportFlowForSave,
     summarize,
     layoutAuto,
   };

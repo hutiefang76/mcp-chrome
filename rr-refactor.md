@@ -50,7 +50,7 @@
 
 #### Phase 1.3: 数据模型统一 🔄
 
-**当前状态**：新 Action/Flow 类型已在 `actions/types.ts` 中定义，但旧类型仍在使用中
+**当前状态**：P0 已完成，录制产物现在可以直接回放。P1-P4 待后续迭代。
 
 **核心问题**：录制与回放数据格式不一致
 
@@ -85,17 +85,20 @@
 
 **迁移策略（推荐分阶段）**：
 
-**P0: 先让录制产物可运行（最小改动）**
+**P0: 先让录制产物可运行（最小改动）** ✅
 
-- [ ] 在 `recording/flow-builder.ts` 保存时，把 `steps` 转换为 DAG（复用 `packages/shared/src/rr-graph.ts:stepsToNodes`）
-- [ ] 确保保存的 flow 同时有 `steps` 和 `nodes/edges`（向后兼容）
-- 涉及文件：`recording/flow-builder.ts`、`recording/session-manager.ts`
+- [x] 在 `flow-store.ts:saveFlow` 保存时，把 `steps` 转换为 DAG（新增 `packages/shared/src/rr-graph.ts:stepsToDAG`）
+- [x] 确保保存的 flow 同时有 `steps` 和 `nodes/edges`（向后兼容）
+- [x] 添加 `normalizeFlowForSave` 归一化函数，只在 nodes 缺失时补齐
+- [x] 添加 `filterValidEdges` 校验旧 edges 有效性，避免 topoOrder 崩溃
+- 涉及文件：`packages/shared/src/rr-graph.ts`、`flow-store.ts`
 
 **P1: 存储层统一（单一真源）**
 
-- [ ] `flow-store.ts` 读写逻辑适配新 Flow
-- [ ] `importFlowFromJson` 支持新旧格式自动识别
+- [x] `flow-store.ts` 读写逻辑适配新 Flow（P0 已完成）
+- [ ] `importFlowFromJson` 支持新旧格式自动识别（P0 已间接支持：导入后保存会触发 normalize）
 - [ ] 考虑 IndexedDB schema 升级策略
+- [ ] 迁移场景：`ensureMigratedFromLocal()` 需要做 lazy normalize（当前迁移不走 saveFlow）
 - 涉及文件：`flow-store.ts`、`storage/indexeddb-manager.ts`
 
 **P2: 录制链路迁移**
@@ -154,21 +157,21 @@
 
 ### 1.2 高严重度 Bug
 
-| Bug                    | 位置                                                | 描述                                   |
-| ---------------------- | --------------------------------------------------- | -------------------------------------- |
-| 数据格式不兼容         | `flow-builder.ts` / `scheduler.ts`                  | 录制产生 steps，回放需要 nodes/edges   |
-| 变量丢失               | `recorder.js:609` / `content-message-handler.ts:18` | 变量只存本地，不传给 background        |
-| 步骤丢失               | `recorder.js:584-594`                               | pause/stop/导航时未 flush 缓冲区       |
-| fill 值不完整          | `recorder.js:13-14`                                 | debounce 800ms vs flush 100ms 时序冲突 |
-| trigger 无 handler     | `nodes/index.ts:58`                                 | UI 可用但运行时无执行器                |
-| 选择器桥死锁           | `accessibility-tree-helper.js:1051`                 | iframe 通信无超时                      |
-| Builder 保存丢失子流程 | `useBuilderStore.ts:392`                            | 编辑子流程时保存不会 flush             |
+| Bug                    | 位置                                                | 描述                                   | 状态        |
+| ---------------------- | --------------------------------------------------- | -------------------------------------- | ----------- |
+| 数据格式不兼容         | `flow-builder.ts` / `scheduler.ts`                  | 录制产生 steps，回放需要 nodes/edges   | ✅ 已修复   |
+| 变量丢失               | `recorder.js:609` / `content-message-handler.ts:18` | 变量只存本地，不传给 background        | ✅ 已修复   |
+| 步骤丢失               | `recorder.js:584-594`                               | pause/stop/导航时未 flush 缓冲区       | ✅ 已修复   |
+| fill 值不完整          | `recorder.js:13-14`                                 | debounce 800ms vs flush 100ms 时序冲突 | 🔄 部分修复 |
+| trigger 无 handler     | `nodes/index.ts:58`                                 | UI 可用但运行时无执行器                | ✅ 已修复   |
+| 选择器桥死锁           | `accessibility-tree-helper.js:1051`                 | iframe 通信无超时                      | ✅ 已修复   |
+| Builder 保存丢失子流程 | `useBuilderStore.ts:392`                            | 编辑子流程时保存不会 flush             | ✅ 已修复   |
 
 ### 1.3 中严重度 Bug
 
-| Bug                       | 位置                                     | 描述                          |
-| ------------------------- | ---------------------------------------- | ----------------------------- |
-| pause/resume 状态不同步   | `recorder.js:476` / `session-manager.ts` | content 暂停，background 继续 |
+| Bug                       | 位置                                     | 描述                          | 状态      |
+| ------------------------- | ---------------------------------------- | ----------------------------- | --------- |
+| pause/resume 状态不同步   | `recorder.js:476` / `session-manager.ts` | content 暂停，background 继续 | ✅ 已修复 |
 | 双击产生多余点击          | `recorder.js:650`                        | click + dblclick 序列问题     |
 | contenteditable 不录制    | `recorder.js:663-684`                    | focusin 支持但 input 不支持   |
 | 跨 frame 消息无验证       | `recorder.js:577,1026`                   | postMessage('\*') 可被伪造    |

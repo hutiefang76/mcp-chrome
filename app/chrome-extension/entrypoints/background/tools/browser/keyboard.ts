@@ -11,6 +11,7 @@ interface KeyboardToolParams {
   delay?: number; // Optional: delay between keystrokes in milliseconds
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
+  frameId?: number; // target frame id for iframe support
 }
 
 /**
@@ -93,15 +94,27 @@ class KeyboardTool extends BaseBrowserToolExecutor {
         finalSelector = undefined;
       }
 
-      await this.injectContentScript(tab.id, ['inject-scripts/keyboard-helper.js']);
+      const frameIds = typeof args.frameId === 'number' ? [args.frameId] : undefined;
+      await this.injectContentScript(
+        tab.id,
+        ['inject-scripts/keyboard-helper.js'],
+        false,
+        'ISOLATED',
+        false,
+        frameIds,
+      );
 
       // Send keyboard simulation message to content script
-      const result = await this.sendMessageToTab(tab.id, {
-        action: TOOL_MESSAGE_TYPES.SIMULATE_KEYBOARD,
-        keys,
-        selector: finalSelector,
-        delay,
-      });
+      const result = await this.sendMessageToTab(
+        tab.id,
+        {
+          action: TOOL_MESSAGE_TYPES.SIMULATE_KEYBOARD,
+          keys,
+          selector: finalSelector,
+          delay,
+        },
+        args.frameId,
+      );
 
       if (result.error) {
         return createErrorResponse(result.error);

@@ -12,6 +12,7 @@
 
 import { Disposer } from '../../../utils/disposables';
 import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
+import type { DesignTokensService } from '../../../core/design-tokens';
 import { createColorField, type ColorField } from './color-field';
 import { wireNumberStepping } from './number-stepping';
 import type { DesignControl } from '../types';
@@ -550,10 +551,12 @@ function needsColorPlaceholder(value: string): boolean {
 export interface GradientControlOptions {
   container: HTMLElement;
   transactionManager: TransactionManager;
+  /** Optional: Design tokens service for TokenPill/TokenPicker integration (Phase 5.3) */
+  tokensService?: DesignTokensService;
 }
 
 export function createGradientControl(options: GradientControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   let currentTarget: Element | null = null;
@@ -742,6 +745,8 @@ export function createGradientControl(options: GradientControlOptions): DesignCo
   const stop1ColorField: ColorField = createColorField({
     container: stop1ColorContainer,
     ariaLabel: 'Stop 1 Color',
+    tokensService,
+    getTokenTarget: () => currentTarget,
     onInput: (value) => {
       stop1ColorValue = value;
       previewGradient();
@@ -760,6 +765,8 @@ export function createGradientControl(options: GradientControlOptions): DesignCo
   const stop2ColorField: ColorField = createColorField({
     container: stop2ColorContainer,
     ariaLabel: 'Stop 2 Color',
+    tokensService,
+    getTokenTarget: () => currentTarget,
     onInput: (value) => {
       stop2ColorValue = value;
       previewGradient();

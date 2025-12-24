@@ -20,13 +20,21 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
     injectImmediately = false,
     world: 'MAIN' | 'ISOLATED' = 'ISOLATED',
     allFrames: boolean = false,
+    frameIds?: number[],
   ): Promise<void> {
     console.log(`Injecting ${files.join(', ')} into tab ${tabId}`);
 
     // check if script is already injected
     try {
+      const pingFrameId = frameIds?.[0];
       const response = await Promise.race([
-        chrome.tabs.sendMessage(tabId, { action: `${this.name}_ping` }),
+        typeof pingFrameId === 'number'
+          ? chrome.tabs.sendMessage(
+              tabId,
+              { action: `${this.name}_ping` },
+              { frameId: pingFrameId },
+            )
+          : chrome.tabs.sendMessage(tabId, { action: `${this.name}_ping` }),
         new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error(`${this.name} Ping action to tab ${tabId} timed out`)),
@@ -50,12 +58,18 @@ export abstract class BaseBrowserToolExecutor implements ToolExecutor {
     }
 
     try {
+      const target: { tabId: number; allFrames?: boolean; frameIds?: number[] } = { tabId };
+      if (frameIds && frameIds.length > 0) {
+        target.frameIds = frameIds;
+      } else if (allFrames) {
+        target.allFrames = true;
+      }
       await chrome.scripting.executeScript({
-        target: { tabId, allFrames },
+        target,
         files,
         injectImmediately,
         world,
-      });
+      } as any);
       console.log(`'${files.join(', ')}' injection successful for tab ${tabId}`);
     } catch (injectionError) {
       const errorMessage =

@@ -13,6 +13,7 @@
 
 import { Disposer } from '../../../utils/disposables';
 import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
+import type { DesignTokensService } from '../../../core/design-tokens';
 import { createColorField, type ColorField } from './color-field';
 import { wireNumberStepping } from './number-stepping';
 import type { DesignControl } from '../types';
@@ -477,10 +478,12 @@ function upsertBlurFunction(existing: string, radius: string): string {
 export interface EffectsControlOptions {
   container: HTMLElement;
   transactionManager: TransactionManager;
+  /** Optional: Design tokens service for TokenPill/TokenPicker integration (Phase 5.3) */
+  tokensService?: DesignTokensService;
 }
 
 export function createEffectsControl(options: EffectsControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   let currentTarget: Element | null = null;
@@ -625,6 +628,8 @@ export function createEffectsControl(options: EffectsControlOptions): DesignCont
   const shadowColorField: ColorField = createColorField({
     container: colorFieldContainer,
     ariaLabel: 'Shadow Color',
+    tokensService,
+    getTokenTarget: () => currentTarget,
     onInput: (value) => {
       shadowColorValue = value;
       previewShadow();

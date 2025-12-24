@@ -23,10 +23,17 @@
  */
 
 import { Disposer } from '../../../utils/disposables';
-import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
+import type {
+  MultiStyleTransactionHandle,
+  StyleTransactionHandle,
+  TransactionManager,
+} from '../../../core/transaction-manager';
+import type { DesignTokensService } from '../../../core/design-tokens';
 import { createIconButtonGroup, type IconButtonGroup } from '../components/icon-button-group';
+import { createInputContainer, type InputContainer } from '../components/input-container';
 import { createColorField, type ColorField } from './color-field';
 import { createGradientControl } from './gradient-control';
+import { combineLengthValue, formatLengthForDisplay } from './css-helpers';
 import { wireNumberStepping } from './number-stepping';
 import type { DesignControl } from '../types';
 
@@ -45,6 +52,25 @@ type BorderEdge = (typeof BORDER_EDGE_VALUES)[number];
 
 const BACKGROUND_TYPE_VALUES = ['solid', 'gradient', 'image'] as const;
 type BackgroundType = (typeof BACKGROUND_TYPE_VALUES)[number];
+
+// Border radius corner properties
+const BORDER_RADIUS_CORNERS = ['top-left', 'top-right', 'bottom-right', 'bottom-left'] as const;
+type BorderRadiusCorner = (typeof BORDER_RADIUS_CORNERS)[number];
+
+const BORDER_RADIUS_CORNER_PROPERTIES: Record<BorderRadiusCorner, string> = {
+  'top-left': 'border-top-left-radius',
+  'top-right': 'border-top-right-radius',
+  'bottom-right': 'border-bottom-right-radius',
+  'bottom-left': 'border-bottom-left-radius',
+};
+
+const BORDER_RADIUS_TRANSACTION_PROPERTIES = [
+  'border-radius',
+  'border-top-left-radius',
+  'border-top-right-radius',
+  'border-bottom-right-radius',
+  'border-bottom-left-radius',
+] as const;
 
 // =============================================================================
 // Types
@@ -86,7 +112,22 @@ interface ColorFieldState {
   handle: StyleTransactionHandle | null;
 }
 
-type FieldState = TextFieldState | SelectFieldState | ColorFieldState;
+/** Border radius field state (unified + per-corner inputs) */
+interface BorderRadiusFieldState {
+  kind: 'border-radius';
+  property: 'border-radius';
+  root: HTMLDivElement;
+  unified: InputContainer;
+  toggleButton: HTMLButtonElement;
+  cornersGrid: HTMLDivElement;
+  corners: Record<BorderRadiusCorner, InputContainer>;
+  handle: MultiStyleTransactionHandle | null;
+  expanded: boolean;
+  mode: 'unified' | 'corners' | null;
+  cornersMaterialized: boolean;
+}
+
+type FieldState = TextFieldState | SelectFieldState | ColorFieldState | BorderRadiusFieldState;
 
 // =============================================================================
 // Helpers
@@ -181,6 +222,62 @@ function createBorderEdgeIcon(edge: BorderEdge): SVGElement {
 }
 
 /**
+ * Create SVG icon for edit corners button
+ */
+function createEditCornersIcon(): SVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 15 15');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('d', 'M4 6V4H6 M9 4H11V6 M11 9V11H9 M6 11H4V9');
+  svg.appendChild(path);
+
+  return svg;
+}
+
+/**
+ * Create SVG icon for specific corner
+ */
+function createCornerIcon(corner: BorderRadiusCorner): SVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 15 15');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+
+  switch (corner) {
+    case 'top-left':
+      path.setAttribute('d', 'M11 4H6Q4 4 4 6V11');
+      break;
+    case 'top-right':
+      path.setAttribute('d', 'M4 4H9Q11 4 11 6V11');
+      break;
+    case 'bottom-right':
+      path.setAttribute('d', 'M11 4V9Q11 11 9 11H4');
+      break;
+    case 'bottom-left':
+      path.setAttribute('d', 'M4 4V9Q4 11 6 11H11');
+      break;
+  }
+
+  svg.appendChild(path);
+  return svg;
+}
+
+/**
  * Infer background type from background-image CSS value
  */
 function inferBackgroundType(bgImage: string): BackgroundType {
@@ -219,10 +316,12 @@ function normalizeBackgroundImageUrl(raw: string): string {
 export interface AppearanceControlOptions {
   container: HTMLElement;
   transactionManager: TransactionManager;
+  /** Optional: Design tokens service for TokenPill/TokenPicker integration (Phase 5.3) */
+  tokensService?: DesignTokensService;
 }
 
 export function createAppearanceControl(options: AppearanceControlOptions): DesignControl {
-  const { container, transactionManager } = options;
+  const { container, transactionManager, tokensService } = options;
   const disposer = new Disposer();
 
   let currentTarget: Element | null = null;
@@ -352,12 +451,113 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
   );
   const { row: borderColorRow, colorFieldContainer: borderColorContainer } =
     createColorRow('Color');
-  const { row: radiusRow, input: radiusInput } = createInputRow('Radius', 'Border Radius');
+
+  // ---------------------------------------------------------------------------
+  // Border Radius (unified + per-corner editing)
+  // ---------------------------------------------------------------------------
+  const borderRadiusRow = document.createElement('div');
+  borderRadiusRow.className = 'we-field';
+
+  const borderRadiusLabel = document.createElement('span');
+  borderRadiusLabel.className = 'we-field-label';
+  borderRadiusLabel.textContent = 'Radius';
+
+  const borderRadiusControl = document.createElement('div');
+  borderRadiusControl.className = 'we-radius-control';
+
+  // Unified row (input + toggle button)
+  const borderRadiusUnifiedRow = document.createElement('div');
+  borderRadiusUnifiedRow.className = 'we-field-row';
+
+  const borderRadiusUnified = createInputContainer({
+    ariaLabel: 'Border Radius',
+    inputMode: 'decimal',
+    prefix: null,
+    suffix: 'px',
+  });
+  borderRadiusUnified.root.style.flex = '1';
+
+  const borderRadiusToggleButton = document.createElement('button');
+  borderRadiusToggleButton.type = 'button';
+  borderRadiusToggleButton.className = 'we-toggle-btn';
+  borderRadiusToggleButton.setAttribute('aria-label', 'Edit corners');
+  borderRadiusToggleButton.setAttribute('aria-pressed', 'false');
+  borderRadiusToggleButton.dataset.tooltip = 'Edit corners';
+  borderRadiusToggleButton.append(createEditCornersIcon());
+
+  borderRadiusUnifiedRow.append(borderRadiusUnified.root, borderRadiusToggleButton);
+
+  // Corners grid (2x2 layout)
+  const borderRadiusCornersGrid = document.createElement('div');
+  borderRadiusCornersGrid.className = 'we-radius-corners-grid';
+  borderRadiusCornersGrid.hidden = true;
+
+  const borderRadiusCorners: Record<BorderRadiusCorner, InputContainer> = {
+    'top-left': createInputContainer({
+      ariaLabel: 'Top-left radius',
+      inputMode: 'decimal',
+      prefix: createCornerIcon('top-left'),
+      suffix: 'px',
+    }),
+    'top-right': createInputContainer({
+      ariaLabel: 'Top-right radius',
+      inputMode: 'decimal',
+      prefix: createCornerIcon('top-right'),
+      suffix: 'px',
+    }),
+    'bottom-left': createInputContainer({
+      ariaLabel: 'Bottom-left radius',
+      inputMode: 'decimal',
+      prefix: createCornerIcon('bottom-left'),
+      suffix: 'px',
+    }),
+    'bottom-right': createInputContainer({
+      ariaLabel: 'Bottom-right radius',
+      inputMode: 'decimal',
+      prefix: createCornerIcon('bottom-right'),
+      suffix: 'px',
+    }),
+  };
+
+  // 2x2 layout matching visual corner positions
+  borderRadiusCornersGrid.append(
+    borderRadiusCorners['top-left'].root,
+    borderRadiusCorners['top-right'].root,
+    borderRadiusCorners['bottom-left'].root,
+    borderRadiusCorners['bottom-right'].root,
+  );
+
+  borderRadiusControl.append(borderRadiusUnifiedRow, borderRadiusCornersGrid);
+  borderRadiusRow.append(borderRadiusLabel, borderRadiusControl);
+
+  // Create field state
+  const borderRadiusField: BorderRadiusFieldState = {
+    kind: 'border-radius',
+    property: 'border-radius',
+    root: borderRadiusRow,
+    unified: borderRadiusUnified,
+    toggleButton: borderRadiusToggleButton,
+    cornersGrid: borderRadiusCornersGrid,
+    corners: borderRadiusCorners,
+    handle: null,
+    expanded: false,
+    mode: null,
+    cornersMaterialized: false,
+  };
 
   wireNumberStepping(disposer, borderWidthInput, { mode: 'css-length' });
-  wireNumberStepping(disposer, radiusInput, { mode: 'css-length' });
+  wireNumberStepping(disposer, borderRadiusUnified.input, { mode: 'css-length' });
+  for (const corner of BORDER_RADIUS_CORNERS) {
+    wireNumberStepping(disposer, borderRadiusCorners[corner].input, { mode: 'css-length' });
+  }
 
-  borderSection.append(borderEdgeRow, borderWidthRow, borderStyleRow, borderColorRow, radiusRow);
+  borderSection.append(
+    borderEdgeRow,
+    borderWidthRow,
+    borderStyleRow,
+    borderColorRow,
+    borderRadiusRow,
+  );
 
   // ===========================================================================
   // Background Section
@@ -437,6 +637,7 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
   const gradientControl = createGradientControl({
     container: bgGradientMount,
     transactionManager,
+    tokensService,
   });
   disposer.add(() => gradientControl.dispose());
 
@@ -447,6 +648,8 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
   const borderColorField = createColorField({
     container: borderColorContainer,
     ariaLabel: 'Border Color',
+    tokensService,
+    getTokenTarget: () => currentTarget,
     onInput: (value) => {
       const handle = beginTransaction('border-color');
       if (handle) handle.set(value);
@@ -465,6 +668,8 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
   const bgColorField = createColorField({
     container: bgColorContainer,
     ariaLabel: 'Background Color',
+    tokensService,
+    getTokenTarget: () => currentTarget,
     onInput: (value) => {
       const handle = beginTransaction('background-color');
       if (handle) handle.set(value);
@@ -493,12 +698,7 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
       handle: null,
     },
     opacity: { kind: 'text', property: 'opacity', element: opacityInput, handle: null },
-    'border-radius': {
-      kind: 'text',
-      property: 'border-radius',
-      element: radiusInput,
-      handle: null,
-    },
+    'border-radius': borderRadiusField,
     'border-width': {
       kind: 'text',
       property: 'border-width',
@@ -569,6 +769,8 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
     if (!target || !target.isConnected) return null;
 
     const field = fields[property];
+    // Border-radius uses multi-style transaction
+    if (field.kind === 'border-radius') return null;
     if (field.handle) return field.handle;
 
     const cssProperty = resolveCssProperty(property);
@@ -579,6 +781,8 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
 
   function commitTransaction(property: AppearanceProperty): void {
     const field = fields[property];
+    // Border-radius uses separate commit function
+    if (field.kind === 'border-radius') return;
     const handle = field.handle;
     field.handle = null;
     if (handle) handle.commit({ merge: true });
@@ -586,13 +790,56 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
 
   function rollbackTransaction(property: AppearanceProperty): void {
     const field = fields[property];
+    // Border-radius uses separate rollback function
+    if (field.kind === 'border-radius') return;
     const handle = field.handle;
     field.handle = null;
     if (handle) handle.rollback();
   }
 
+  // Border-radius multi-style transaction helpers
+  function beginBorderRadiusTransaction(): MultiStyleTransactionHandle | null {
+    if (disposer.isDisposed) return null;
+    const field = fields['border-radius'];
+    if (field.kind !== 'border-radius') return null;
+
+    const target = currentTarget;
+    if (!target || !target.isConnected) return null;
+
+    if (field.handle) return field.handle;
+
+    const handle = transactionManager.beginMultiStyle(target, [
+      ...BORDER_RADIUS_TRANSACTION_PROPERTIES,
+    ]);
+    field.handle = handle;
+    field.mode = null;
+    field.cornersMaterialized = false;
+    return handle;
+  }
+
+  function commitBorderRadiusTransaction(): void {
+    const field = fields['border-radius'];
+    if (field.kind !== 'border-radius') return;
+    const handle = field.handle;
+    field.handle = null;
+    field.mode = null;
+    field.cornersMaterialized = false;
+    if (handle) handle.commit({ merge: true });
+  }
+
+  function rollbackBorderRadiusTransaction(): void {
+    const field = fields['border-radius'];
+    if (field.kind !== 'border-radius') return;
+    const handle = field.handle;
+    field.handle = null;
+    field.mode = null;
+    field.cornersMaterialized = false;
+    if (handle) handle.rollback();
+  }
+
   function commitAllTransactions(): void {
     for (const p of PROPS) commitTransaction(p);
+    commitBorderRadiusTransaction();
   }
 
   // ===========================================================================
@@ -642,6 +889,69 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
     const field = fields[property];
     const target = currentTarget;
     const cssProperty = resolveCssProperty(property);
+
+    // Handle border-radius field (unified + per-corner)
+    if (field.kind === 'border-radius') {
+      const hasTarget = Boolean(target && target.isConnected);
+
+      field.unified.input.disabled = !hasTarget;
+      field.toggleButton.disabled = !hasTarget;
+      for (const corner of BORDER_RADIUS_CORNERS) {
+        field.corners[corner].input.disabled = !hasTarget;
+      }
+
+      if (!hasTarget || !target) {
+        field.unified.input.value = '';
+        field.unified.input.placeholder = '';
+        field.unified.setSuffix('px');
+        for (const corner of BORDER_RADIUS_CORNERS) {
+          field.corners[corner].input.value = '';
+          field.corners[corner].input.placeholder = '';
+          field.corners[corner].setSuffix('px');
+        }
+        return;
+      }
+
+      const isCornerFocused = BORDER_RADIUS_CORNERS.some((c) =>
+        isFieldFocused(field.corners[c].input),
+      );
+      const isEditing =
+        field.handle !== null || isFieldFocused(field.unified.input) || isCornerFocused;
+      if (isEditing && !force) return;
+
+      // Unified value
+      const inlineUnified = readInlineValue(target, 'border-radius');
+      if (inlineUnified) {
+        const formatted = formatLengthForDisplay(inlineUnified);
+        field.unified.input.value = formatted.value;
+        field.unified.setSuffix(formatted.suffix);
+      } else {
+        // Check if all corners are the same
+        const tl = readComputedValue(target, BORDER_RADIUS_CORNER_PROPERTIES['top-left']);
+        const tr = readComputedValue(target, BORDER_RADIUS_CORNER_PROPERTIES['top-right']);
+        const br = readComputedValue(target, BORDER_RADIUS_CORNER_PROPERTIES['bottom-right']);
+        const bl = readComputedValue(target, BORDER_RADIUS_CORNER_PROPERTIES['bottom-left']);
+        const displayValue =
+          tl === tr && tl === br && tl === bl ? tl : readComputedValue(target, 'border-radius');
+        const formatted = formatLengthForDisplay(displayValue);
+        field.unified.input.value = formatted.value;
+        field.unified.setSuffix(formatted.suffix);
+      }
+      field.unified.input.placeholder = '';
+
+      // Corner values
+      for (const corner of BORDER_RADIUS_CORNERS) {
+        const propName = BORDER_RADIUS_CORNER_PROPERTIES[corner];
+        const inlineValue = readInlineValue(target, propName);
+        const computedValue = readComputedValue(target, propName);
+        const displayValue = inlineValue || computedValue;
+        const formatted = formatLengthForDisplay(displayValue);
+        field.corners[corner].input.value = formatted.value;
+        field.corners[corner].input.placeholder = '';
+        field.corners[corner].setSuffix(formatted.suffix);
+      }
+      return;
+    }
 
     if (field.kind === 'text') {
       const input = field.element;
@@ -729,7 +1039,7 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
 
   function getNormalizer(property: AppearanceProperty): (v: string) => string {
     if (property === 'opacity') return normalizeOpacity;
-    if (property === 'border-radius' || property === 'border-width') return normalizeLength;
+    if (property === 'border-width') return normalizeLength;
     if (property === 'background-image') return normalizeBackgroundImageUrl;
     return (v) => v.trim();
   }
@@ -797,11 +1107,122 @@ export function createAppearanceControl(options: AppearanceControlOptions): Desi
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Wire border-radius control (toggle + unified + corners)
+  // ---------------------------------------------------------------------------
+  function wireBorderRadiusControl(): void {
+    const field = fields['border-radius'];
+    if (field.kind !== 'border-radius') return;
+
+    // Toggle button
+    const setExpanded = (expanded: boolean) => {
+      field.expanded = expanded;
+      field.cornersGrid.hidden = !expanded;
+      field.toggleButton.setAttribute('aria-pressed', expanded ? 'true' : 'false');
+    };
+    setExpanded(false);
+
+    disposer.listen(field.toggleButton, 'click', () => {
+      setExpanded(!field.expanded);
+    });
+
+    // Unified input preview
+    const previewUnified = () => {
+      const handle = beginBorderRadiusTransaction();
+      if (!handle) return;
+
+      field.mode = 'unified';
+      field.cornersMaterialized = false;
+
+      const v = combineLengthValue(field.unified.input.value, field.unified.getSuffixText());
+      handle.set({
+        'border-radius': v,
+        'border-top-left-radius': '',
+        'border-top-right-radius': '',
+        'border-bottom-right-radius': '',
+        'border-bottom-left-radius': '',
+      });
+    };
+
+    // Corner input preview
+    const previewCorner = (corner: BorderRadiusCorner) => {
+      const target = currentTarget;
+      if (!target || !target.isConnected) return;
+
+      const handle = beginBorderRadiusTransaction();
+      if (!handle) return;
+
+      const cornerProp = BORDER_RADIUS_CORNER_PROPERTIES[corner];
+      const container = field.corners[corner];
+      const next = combineLengthValue(container.input.value, container.getSuffixText());
+
+      // When switching from shorthand to per-corner, materialize all corners first
+      if (field.mode !== 'corners' || !field.cornersMaterialized) {
+        const initialValues: Record<string, string> = {
+          'border-radius': '',
+          'border-top-left-radius':
+            readInlineValue(target, 'border-top-left-radius') ||
+            readComputedValue(target, 'border-top-left-radius'),
+          'border-top-right-radius':
+            readInlineValue(target, 'border-top-right-radius') ||
+            readComputedValue(target, 'border-top-right-radius'),
+          'border-bottom-right-radius':
+            readInlineValue(target, 'border-bottom-right-radius') ||
+            readComputedValue(target, 'border-bottom-right-radius'),
+          'border-bottom-left-radius':
+            readInlineValue(target, 'border-bottom-left-radius') ||
+            readComputedValue(target, 'border-bottom-left-radius'),
+        };
+        initialValues[cornerProp] = next;
+        handle.set(initialValues);
+        field.mode = 'corners';
+        field.cornersMaterialized = true;
+        return;
+      }
+
+      handle.set({ 'border-radius': '', [cornerProp]: next });
+    };
+
+    disposer.listen(field.unified.input, 'input', previewUnified);
+    for (const corner of BORDER_RADIUS_CORNERS) {
+      disposer.listen(field.corners[corner].input, 'input', () => previewCorner(corner));
+    }
+
+    // Commit when leaving the whole radius control
+    disposer.listen(field.root, 'focusout', (e: FocusEvent) => {
+      const next = e.relatedTarget;
+      if (next instanceof Node && field.root.contains(next)) return;
+      commitBorderRadiusTransaction();
+      syncAllFields();
+    });
+
+    // Keydown handlers
+    const wireKeydown = (input: HTMLInputElement) => {
+      disposer.listen(input, 'keydown', (e: KeyboardEvent) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitBorderRadiusTransaction();
+          syncAllFields();
+          input.blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          rollbackBorderRadiusTransaction();
+          syncField('border-radius', true);
+        }
+      });
+    };
+
+    wireKeydown(field.unified.input);
+    for (const corner of BORDER_RADIUS_CORNERS) {
+      wireKeydown(field.corners[corner].input);
+    }
+  }
+
   // Wire all fields
   wireSelect('overflow');
   wireSelect('box-sizing');
   wireTextInput('opacity');
-  wireTextInput('border-radius');
+  wireBorderRadiusControl();
   wireTextInput('border-width');
   wireSelect('border-style');
   wireTextInput('background-image');

@@ -2,10 +2,13 @@
  * Typography Control (Phase 3.7)
  *
  * Edits inline typography styles:
+ * - font-family (select + custom input)
  * - font-size (input)
  * - font-weight (select)
  * - line-height (input)
+ * - letter-spacing (input)
  * - text-align (select)
+ * - vertical-align (select)
  * - color (input with optional token picker)
  *
  * Phase 5.4: Added optional DesignTokensService integration for color field.
@@ -13,8 +16,7 @@
 
 import { Disposer } from '../../../utils/disposables';
 import type { StyleTransactionHandle, TransactionManager } from '../../../core/transaction-manager';
-import type { DesignTokensService, CssVarName } from '../../../core/design-tokens';
-import { createTokenPicker, type TokenPicker } from './token-picker';
+import type { DesignTokensService } from '../../../core/design-tokens';
 import { createColorField, type ColorField } from './color-field';
 import { createInputContainer, type InputContainer } from '../components/input-container';
 import { combineLengthValue, formatLengthForDisplay, hasExplicitUnit } from './css-helpers';
@@ -27,8 +29,34 @@ import type { DesignControl } from '../types';
 
 const FONT_WEIGHT_VALUES = ['100', '200', '300', '400', '500', '600', '700', '800', '900'] as const;
 const TEXT_ALIGN_VALUES = ['left', 'center', 'right', 'justify'] as const;
+const FONT_FAMILY_PRESET_VALUES = [
+  'inherit',
+  'system-ui',
+  'sans-serif',
+  'serif',
+  'monospace',
+] as const;
+const FONT_FAMILY_CUSTOM_VALUE = 'custom';
+const VERTICAL_ALIGN_VALUES = [
+  'baseline',
+  'middle',
+  'top',
+  'bottom',
+  'text-top',
+  'text-bottom',
+  'sub',
+  'super',
+] as const;
 
-type TypographyProperty = 'font-size' | 'font-weight' | 'line-height' | 'text-align' | 'color';
+type TypographyProperty =
+  | 'font-family'
+  | 'font-size'
+  | 'font-weight'
+  | 'line-height'
+  | 'letter-spacing'
+  | 'text-align'
+  | 'vertical-align'
+  | 'color';
 
 /** Standard input/select field state */
 interface StandardFieldState {
@@ -40,6 +68,16 @@ interface StandardFieldState {
   container?: InputContainer;
 }
 
+/** Font-family field state (preset select + optional custom input) */
+interface FontFamilyFieldState {
+  kind: 'font-family';
+  property: 'font-family';
+  select: HTMLSelectElement;
+  custom: InputContainer;
+  controlsContainer: HTMLElement;
+  handle: StyleTransactionHandle | null;
+}
+
 /** Color field state */
 interface ColorFieldState {
   kind: 'color';
@@ -48,7 +86,7 @@ interface ColorFieldState {
   handle: StyleTransactionHandle | null;
 }
 
-type FieldState = StandardFieldState | ColorFieldState;
+type FieldState = StandardFieldState | FontFamilyFieldState | ColorFieldState;
 
 // =============================================================================
 // Helpers
@@ -113,7 +151,50 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
   const root = document.createElement('div');
   root.className = 'we-field-group';
 
+  // ---------------------------------------------------------------------------
+  // Font Family (preset select + optional custom input)
+  // ---------------------------------------------------------------------------
+  const fontFamilyRow = document.createElement('div');
+  fontFamilyRow.className = 'we-field';
+  const fontFamilyLabel = document.createElement('span');
+  fontFamilyLabel.className = 'we-field-label';
+  fontFamilyLabel.textContent = 'Font';
+
+  const fontFamilyControls = document.createElement('div');
+  fontFamilyControls.className = 'we-field-content';
+  fontFamilyControls.style.display = 'flex';
+  fontFamilyControls.style.flexDirection = 'column';
+  fontFamilyControls.style.gap = '4px';
+
+  const fontFamilySelect = document.createElement('select');
+  fontFamilySelect.className = 'we-select';
+  fontFamilySelect.setAttribute('aria-label', 'Font Family');
+  for (const v of FONT_FAMILY_PRESET_VALUES) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v;
+    fontFamilySelect.append(opt);
+  }
+  const customFontOpt = document.createElement('option');
+  customFontOpt.value = FONT_FAMILY_CUSTOM_VALUE;
+  customFontOpt.textContent = 'Custom…';
+  fontFamilySelect.append(customFontOpt);
+
+  const fontFamilyCustomContainer = createInputContainer({
+    ariaLabel: 'Custom Font Family',
+    prefix: null,
+    suffix: null,
+    placeholder: 'e.g. Inter, system-ui',
+  });
+  fontFamilyCustomContainer.root.style.display = 'none';
+  fontFamilyCustomContainer.input.disabled = true;
+
+  fontFamilyControls.append(fontFamilySelect, fontFamilyCustomContainer.root);
+  fontFamilyRow.append(fontFamilyLabel, fontFamilyControls);
+
+  // ---------------------------------------------------------------------------
   // Font Size (with input-container for suffix support)
+  // ---------------------------------------------------------------------------
   const fontSizeRow = document.createElement('div');
   fontSizeRow.className = 'we-field';
   const fontSizeLabel = document.createElement('span');
@@ -158,6 +239,22 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
   });
   lineHeightRow.append(lineHeightLabel, lineHeightContainer.root);
 
+  // ---------------------------------------------------------------------------
+  // Letter Spacing
+  // ---------------------------------------------------------------------------
+  const letterSpacingRow = document.createElement('div');
+  letterSpacingRow.className = 'we-field';
+  const letterSpacingLabel = document.createElement('span');
+  letterSpacingLabel.className = 'we-field-label';
+  letterSpacingLabel.textContent = 'Spacing';
+  const letterSpacingContainer = createInputContainer({
+    ariaLabel: 'Letter Spacing',
+    inputMode: 'decimal',
+    prefix: null,
+    suffix: 'px',
+  });
+  letterSpacingRow.append(letterSpacingLabel, letterSpacingContainer.root);
+
   // Wire up keyboard stepping for arrow up/down
   wireNumberStepping(disposer, fontSizeContainer.input, { mode: 'css-length' });
   wireNumberStepping(disposer, lineHeightContainer.input, {
@@ -166,8 +263,16 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
     shiftStep: 1,
     altStep: 0.01,
   });
+  wireNumberStepping(disposer, letterSpacingContainer.input, {
+    mode: 'css-length',
+    step: 0.1,
+    shiftStep: 1,
+    altStep: 0.01,
+  });
 
+  // ---------------------------------------------------------------------------
   // Text Align
+  // ---------------------------------------------------------------------------
   const textAlignRow = document.createElement('div');
   textAlignRow.className = 'we-field';
   const textAlignLabel = document.createElement('span');
@@ -184,84 +289,62 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
   }
   textAlignRow.append(textAlignLabel, textAlignSelect);
 
-  // Color (with ColorField and optional token picker)
+  // ---------------------------------------------------------------------------
+  // Vertical Align
+  // ---------------------------------------------------------------------------
+  const verticalAlignRow = document.createElement('div');
+  verticalAlignRow.className = 'we-field';
+  const verticalAlignLabel = document.createElement('span');
+  verticalAlignLabel.className = 'we-field-label';
+  verticalAlignLabel.textContent = 'V Align';
+  const verticalAlignSelect = document.createElement('select');
+  verticalAlignSelect.className = 'we-select';
+  verticalAlignSelect.setAttribute('aria-label', 'Vertical Align');
+  for (const v of VERTICAL_ALIGN_VALUES) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v;
+    verticalAlignSelect.append(opt);
+  }
+  verticalAlignRow.append(verticalAlignLabel, verticalAlignSelect);
+
+  // ---------------------------------------------------------------------------
+  // Color (with ColorField - TokenPill and TokenPicker are now built into ColorField)
+  // ---------------------------------------------------------------------------
   const colorRow = document.createElement('div');
   colorRow.className = 'we-field';
-  colorRow.style.position = 'relative'; // For token picker positioning
 
   const colorLabel = document.createElement('span');
   colorLabel.className = 'we-field-label';
   colorLabel.textContent = 'Color';
 
-  const colorFieldWrapper = document.createElement('div');
-  colorFieldWrapper.style.display = 'flex';
-  colorFieldWrapper.style.gap = '4px';
-  colorFieldWrapper.style.flex = '1';
-  colorFieldWrapper.style.alignItems = 'center';
-
   const colorFieldContainer = document.createElement('div');
-  colorFieldContainer.style.flex = '1';
   colorFieldContainer.style.minWidth = '0';
-  colorFieldWrapper.append(colorFieldContainer);
 
-  // Token picker button (only if tokensService is provided)
-  let colorTokenPicker: TokenPicker | null = null;
-  if (tokensService) {
-    const tokenBtn = document.createElement('button');
-    tokenBtn.type = 'button';
-    tokenBtn.className = 'we-token-btn';
-    tokenBtn.setAttribute('aria-label', 'Select design token');
-    tokenBtn.title = 'Select design token';
-    // Simple icon using text (could be replaced with SVG)
-    tokenBtn.innerHTML = '<span class="we-token-btn-icon">⬡</span>';
+  colorRow.append(colorLabel, colorFieldContainer);
 
-    colorFieldWrapper.append(tokenBtn);
-
-    // Create token picker
-    colorTokenPicker = createTokenPicker({
-      container: colorRow,
-      tokensService,
-      onSelect: (tokenName: CssVarName, cssValue: string) => {
-        // Apply the token value
-        const handle = beginTransaction('color');
-        if (handle) {
-          handle.set(cssValue);
-          commitTransaction('color');
-          syncAllFields();
-        }
-      },
-    });
-    disposer.add(() => colorTokenPicker?.dispose());
-
-    // Toggle picker on button click
-    disposer.listen(tokenBtn, 'click', (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      colorTokenPicker?.toggle();
-    });
-
-    // Close picker when clicking outside
-    disposer.listen(document, 'click', (e: MouseEvent) => {
-      if (!colorTokenPicker?.isVisible()) return;
-      const target = e.target as Node;
-      if (!colorRow.contains(target)) {
-        colorTokenPicker.hide();
-      }
-    });
-  }
-
-  colorRow.append(colorLabel, colorFieldWrapper);
-
-  root.append(fontSizeRow, fontWeightRow, lineHeightRow, textAlignRow, colorRow);
+  root.append(
+    fontFamilyRow,
+    fontSizeRow,
+    fontWeightRow,
+    lineHeightRow,
+    letterSpacingRow,
+    textAlignRow,
+    verticalAlignRow,
+    colorRow,
+  );
   container.append(root);
   disposer.add(() => root.remove());
 
   // -------------------------------------------------------------------------
   // Create ColorField instance for text color
+  // (TokenPill and TokenPicker are built into ColorField when tokensService is provided)
   // -------------------------------------------------------------------------
   const textColorField = createColorField({
     container: colorFieldContainer,
     ariaLabel: 'Text Color',
+    tokensService,
+    getTokenTarget: () => currentTarget,
     onInput: (value) => {
       const handle = beginTransaction('color');
       if (handle) handle.set(value);
@@ -281,6 +364,14 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
   // Field state map
   // -------------------------------------------------------------------------
   const fields: Record<TypographyProperty, FieldState> = {
+    'font-family': {
+      kind: 'font-family',
+      property: 'font-family',
+      select: fontFamilySelect,
+      custom: fontFamilyCustomContainer,
+      controlsContainer: fontFamilyControls,
+      handle: null,
+    },
     'font-size': {
       kind: 'standard',
       property: 'font-size',
@@ -301,20 +392,36 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
       container: lineHeightContainer,
       handle: null,
     },
+    'letter-spacing': {
+      kind: 'standard',
+      property: 'letter-spacing',
+      element: letterSpacingContainer.input,
+      container: letterSpacingContainer,
+      handle: null,
+    },
     'text-align': {
       kind: 'standard',
       property: 'text-align',
       element: textAlignSelect,
       handle: null,
     },
+    'vertical-align': {
+      kind: 'standard',
+      property: 'vertical-align',
+      element: verticalAlignSelect,
+      handle: null,
+    },
     color: { kind: 'color', property: 'color', field: textColorField, handle: null },
   };
 
   const PROPS: readonly TypographyProperty[] = [
+    'font-family',
     'font-size',
     'font-weight',
     'line-height',
+    'letter-spacing',
     'text-align',
+    'vertical-align',
     'color',
   ];
 
@@ -350,6 +457,42 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
   function syncField(property: TypographyProperty, force = false): void {
     const field = fields[property];
     const target = currentTarget;
+
+    // Handle font-family field (preset select + custom input)
+    if (field.kind === 'font-family') {
+      const presetValues = FONT_FAMILY_PRESET_VALUES as readonly string[];
+
+      if (!target || !target.isConnected) {
+        field.select.disabled = true;
+        field.select.value = presetValues[0] ?? 'inherit';
+        field.custom.input.disabled = true;
+        field.custom.input.value = '';
+        field.custom.root.style.display = 'none';
+        return;
+      }
+
+      field.select.disabled = false;
+
+      const isEditing =
+        field.handle !== null || isFieldFocused(field.select) || isFieldFocused(field.custom.input);
+      if (isEditing && !force) return;
+
+      const inlineValue = readInlineValue(target, property);
+      const displayValue = inlineValue || readComputedValue(target, property);
+      const normalized = displayValue.trim().toLowerCase();
+
+      if (presetValues.includes(normalized)) {
+        field.select.value = normalized;
+        field.custom.root.style.display = 'none';
+        field.custom.input.disabled = true;
+      } else {
+        field.select.value = FONT_FAMILY_CUSTOM_VALUE;
+        field.custom.root.style.display = '';
+        field.custom.input.disabled = false;
+        field.custom.input.value = displayValue;
+      }
+      return;
+    }
 
     if (field.kind === 'color') {
       // Handle ColorField
@@ -390,7 +533,7 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
           el.placeholder = '';
           // Reset suffix to defaults
           if (field.container) {
-            if (property === 'font-size') {
+            if (property === 'font-size' || property === 'letter-spacing') {
               field.container.setSuffix('px');
             } else if (property === 'line-height') {
               field.container.setSuffix(null);
@@ -411,7 +554,7 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
 
         // Update value and suffix dynamically
         if (field.container) {
-          if (property === 'font-size') {
+          if (property === 'font-size' || property === 'letter-spacing') {
             const formatted = formatLengthForDisplay(displayValue);
             el.value = formatted.value;
             field.container.setSuffix(formatted.suffix);
@@ -515,7 +658,74 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Wire font-family (preset select + custom input)
+  // ---------------------------------------------------------------------------
+  function wireFontFamily(): void {
+    const field = fields['font-family'];
+    if (field.kind !== 'font-family') return;
+
+    const { select, custom, controlsContainer } = field;
+
+    const updateCustomVisibility = () => {
+      const isCustom = select.value === FONT_FAMILY_CUSTOM_VALUE;
+      custom.root.style.display = isCustom ? '' : 'none';
+      custom.input.disabled = !isCustom;
+      if (isCustom) custom.input.focus();
+    };
+
+    const previewSelect = () => {
+      updateCustomVisibility();
+      if (select.value === FONT_FAMILY_CUSTOM_VALUE) return;
+      const handle = beginTransaction('font-family');
+      if (handle) handle.set(select.value);
+    };
+
+    disposer.listen(select, 'input', previewSelect);
+    disposer.listen(select, 'change', previewSelect);
+
+    disposer.listen(custom.input, 'input', () => {
+      const handle = beginTransaction('font-family');
+      if (handle) handle.set(custom.input.value.trim());
+    });
+
+    // Commit when focus leaves the whole font-family control
+    disposer.listen(controlsContainer, 'focusout', (e: FocusEvent) => {
+      const next = e.relatedTarget;
+      if (next instanceof Node && controlsContainer.contains(next)) return;
+      commitTransaction('font-family');
+      syncAllFields();
+    });
+
+    disposer.listen(select, 'keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitTransaction('font-family');
+        syncAllFields();
+        select.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        rollbackTransaction('font-family');
+        syncField('font-family', true);
+      }
+    });
+
+    disposer.listen(custom.input, 'keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitTransaction('font-family');
+        syncAllFields();
+        custom.input.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        rollbackTransaction('font-family');
+        syncField('font-family', true);
+      }
+    });
+  }
+
   // Wire standard inputs/selects (color field is wired via its own callbacks)
+  wireFontFamily();
   wireInput('font-size', combineLengthValue);
   wireSelect('font-weight');
   // line-height is special: can be unitless (like 1.5) or with unit (like 24px)
@@ -527,15 +737,16 @@ export function createTypographyControl(options: TypographyControlOptions): Desi
     // For pure numbers, append suffix if exists, otherwise keep unitless
     return suffix ? `${trimmed}${suffix}` : trimmed;
   });
+  wireInput('letter-spacing', combineLengthValue);
   wireSelect('text-align');
+  wireSelect('vertical-align');
 
   function setTarget(element: Element | null): void {
     if (disposer.isDisposed) return;
     if (element !== currentTarget) commitAllTransactions();
     currentTarget = element;
     syncAllFields();
-    // Update token picker target (Phase 5.4)
-    colorTokenPicker?.setTarget(element);
+    // Token picker target is now managed by ColorField internally via getTokenTarget callback
   }
 
   function refresh(): void {

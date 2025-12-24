@@ -627,7 +627,7 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
   flipXBtn.className = 'we-toggle-btn';
   flipXBtn.setAttribute('aria-label', 'Flip horizontal');
   flipXBtn.setAttribute('aria-pressed', 'false');
-  flipXBtn.title = 'Flip horizontal';
+  flipXBtn.dataset.tooltip = 'Flip horizontal';
   flipXBtn.append(createFlipXIcon());
 
   // Flip Y button
@@ -636,7 +636,7 @@ export function createPositionControl(options: PositionControlOptions): DesignCo
   flipYBtn.className = 'we-toggle-btn';
   flipYBtn.setAttribute('aria-label', 'Flip vertical');
   flipYBtn.setAttribute('aria-pressed', 'false');
-  flipYBtn.title = 'Flip vertical';
+  flipYBtn.dataset.tooltip = 'Flip vertical';
   flipYBtn.append(createFlipYIcon());
 
   transformContent.append(rotateContainer.root, flipXBtn, flipYBtn);

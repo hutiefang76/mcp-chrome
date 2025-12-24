@@ -6,7 +6,12 @@ import type { ExecCtx, ExecResult } from '../../nodes';
 import { executeStep } from '../../nodes';
 import { RunLogger } from '../logging/run-logger';
 import { withRetry } from '../policies/retry';
-import { waitForNavigationDone, maybeQuickWaitForNav, ensureReadPageIfWeb } from '../policies/wait';
+import {
+  waitForNavigationDone,
+  maybeQuickWaitForNav,
+  ensureReadPageIfWeb,
+  waitForNetworkIdle,
+} from '../policies/wait';
 import { ENGINE_CONSTANTS } from '../constants';
 import { AfterScriptQueue } from './after-script-queue';
 import { PluginManager } from '../plugins/manager';
@@ -85,12 +90,14 @@ export class StepRunner {
                 beforeInfo.url,
                 Math.min(step.timeoutMs ?? ENGINE_CONSTANTS.DEFAULT_WAIT_MS, remainingBudget),
               );
-            else if (after.waitForNetworkIdle)
-              await waitForNavigationDone(
-                beforeInfo.url,
-                Math.min(step.timeoutMs ?? ENGINE_CONSTANTS.DEFAULT_WAIT_MS, remainingBudget),
+            else if (after.waitForNetworkIdle) {
+              const totalMs = Math.min(
+                step.timeoutMs ?? ENGINE_CONSTANTS.DEFAULT_WAIT_MS,
+                remainingBudget,
               );
-            else
+              const idleMs = Math.min(1500, Math.max(500, Math.floor(totalMs / 3)));
+              await waitForNetworkIdle(totalMs, idleMs);
+            } else
               await maybeQuickWaitForNav(
                 beforeInfo.url,
                 Math.min(step.timeoutMs ?? ENGINE_CONSTANTS.DEFAULT_WAIT_MS, remainingBudget),

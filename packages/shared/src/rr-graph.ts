@@ -2,16 +2,18 @@
 // Note: keep types lightweight to avoid cross-package coupling
 // Centralize step type strings and tiny helpers here to avoid magic literals.
 
+import { EDGE_LABELS, type EdgeLabel } from './labels';
+
 export interface RRNode {
   id: string;
   type: string;
-  config?: any;
+  config?: Record<string, unknown>;
 }
 export interface RREdge {
   id: string;
   from: string;
   to: string;
-  label?: 'default' | 'true' | 'false' | 'onError';
+  label?: EdgeLabel;
 }
 
 // Centralized step type strings (kept in shared to avoid duplication)
@@ -281,132 +283,54 @@ export function nodesToSteps(nodes: RRNode[], edges: RREdge[]): any[] {
 }
 
 // Reverse mapping (Step -> Node config)
-export function mapStepToNodeConfig(s: any): any {
-  // Config-driven generic reverse mapping (prefer this path)
-  try {
-    const out: any = {};
-    for (const [k, v] of Object.entries(s || {})) {
-      if (k === 'id' || k === 'type') continue;
-      out[k] = v as any;
-    }
-    if (out.target) out.target = ensureTarget(out.target);
-    if (out.start) out.start = ensureTarget(out.start);
-    if (out.end) out.end = ensureTarget(out.end);
-    return out;
-  } catch {}
-  const t = s?.type;
-  const base: any = {
-    ...(typeof s?.timeoutMs === 'number' ? { timeoutMs: s.timeoutMs } : {}),
-    ...(s?.retry ? { retry: s.retry } : {}),
-    ...(typeof s?.screenshotOnFail === 'boolean' ? { screenshotOnFail: s.screenshotOnFail } : {}),
-  };
-  if (t === RR_STEP_TYPES.CLICK || t === RR_STEP_TYPES.DBLCLICK)
-    return { ...base, target: ensureTarget(s.target), after: s.after, before: s.before };
-  if (t === RR_STEP_TYPES.FILL)
-    return { ...base, target: ensureTarget(s.target), value: s.value || '' };
-  if (t === RR_STEP_TYPES.WAIT)
-    return { ...base, condition: s.condition || { text: '', appear: true } };
-  if (t === RR_STEP_TYPES.ASSERT)
-    return { ...base, assert: s.assert || { exists: '' }, failStrategy: s.failStrategy };
-  if (t === RR_STEP_TYPES.NAVIGATE) return { ...base, url: s.url || '' };
-  if (t === RR_STEP_TYPES.SCRIPT)
-    return { ...base, world: s.world || 'ISOLATED', code: s.code || '', when: s.when };
-  if (t === RR_STEP_TYPES.EXECUTE_FLOW)
-    return { ...base, flowId: s.flowId || '', inline: s.inline !== false, args: s.args || {} };
-  if (t === RR_STEP_TYPES.IF) return { ...base, condition: s.condition || {} };
-  if (t === RR_STEP_TYPES.KEY) return { ...base, keys: s.keys || '' };
-  if (t === RR_STEP_TYPES.HTTP)
-    return {
-      ...base,
-      method: s.method || 'GET',
-      url: s.url || '',
-      headers: s.headers || {},
-      body: s.body,
-      formData: s.formData,
-      saveAs: s.saveAs || '',
-    };
-  if (t === RR_STEP_TYPES.EXTRACT)
-    return {
-      ...base,
-      selector: s.selector || '',
-      attr: s.attr || 'text',
-      js: s.js || '',
-      saveAs: s.saveAs || '',
-    };
-  if (t === RR_STEP_TYPES.OPEN_TAB) return { ...base, url: s.url || '', newWindow: !!s.newWindow };
-  if (t === RR_STEP_TYPES.SWITCH_TAB)
-    return {
-      ...base,
-      tabId: s.tabId || undefined,
-      urlContains: s.urlContains || '',
-      titleContains: s.titleContains || '',
-    };
-  if (t === RR_STEP_TYPES.CLOSE_TAB)
-    return { ...base, tabIds: Array.isArray(s.tabIds) ? s.tabIds : undefined, url: s.url || '' };
-  if (t === RR_STEP_TYPES.HANDLE_DOWNLOAD)
-    return {
-      ...base,
-      filenameContains: s.filenameContains || '',
-      waitForComplete: s.waitForComplete !== false,
-      timeoutMs: Math.max(0, Number(s.timeoutMs ?? 60000)),
-      saveAs: s.saveAs || '',
-    };
-  if (t === RR_STEP_TYPES.SCREENSHOT)
-    return { ...base, selector: s.selector || '', fullPage: !!s.fullPage, saveAs: s.saveAs || '' };
-  if (t === RR_STEP_TYPES.SCROLL)
-    return {
-      ...base,
-      mode: s.mode || 'offset',
-      target: ensureTarget(s.target),
-      offset: s.offset || { x: 0, y: 300 },
-    };
-  if (t === RR_STEP_TYPES.DRAG)
-    return {
-      ...base,
-      start: ensureTarget(s.start),
-      end: ensureTarget(s.end),
-      path: Array.isArray(s.path) ? s.path : [],
-    };
-  if (t === RR_STEP_TYPES.TRIGGER_EVENT)
-    return {
-      ...base,
-      target: ensureTarget(s.target),
-      event: s.event || 'input',
-      bubbles: s.bubbles !== false,
-      cancelable: !!s.cancelable,
-    };
-  if (t === RR_STEP_TYPES.SET_ATTRIBUTE)
-    return {
-      ...base,
-      target: ensureTarget(s.target),
-      name: s.name || '',
-      value: s.value,
-      remove: !!s.remove,
-    };
-  if (t === RR_STEP_TYPES.LOOP_ELEMENTS)
-    return {
-      ...base,
-      selector: s.selector || '',
-      saveAs: s.saveAs || 'elements',
-      itemVar: s.itemVar || 'item',
-      subflowId: s.subflowId || '',
-    };
-  if (t === RR_STEP_TYPES.SWITCH_FRAME)
-    return {
-      ...base,
-      frame: {
-        index: s.frame && s.frame.index != null ? Number(s.frame.index) : undefined,
-        urlContains: s.frame?.urlContains || '',
-      },
-    };
-  return { ...base };
+export function mapStepToNodeConfig(step: unknown): Record<string, unknown> {
+  if (!step || typeof step !== 'object') return {};
+  const src = step as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(src)) {
+    if (k === 'id' || k === 'type') continue;
+    out[k] = v;
+  }
+  const target = out['target'];
+  if (target) out['target'] = ensureTarget(target);
+  const start = out['start'];
+  if (start) out['start'] = ensureTarget(start);
+  const end = out['end'];
+  if (end) out['end'] = ensureTarget(end);
+  return out;
 }
 
-export function stepsToNodes(steps: any[]): RRNode[] {
+export function stepsToNodes(steps: ReadonlyArray<unknown>): RRNode[] {
   const arr: RRNode[] = [];
-  steps.forEach((s, i) => {
-    const id = s.id || `n_${i}`;
-    arr.push({ id, type: String(s.type || 'script'), config: mapStepToNodeConfig(s) });
+  steps.forEach((step, i) => {
+    const obj: Record<string, unknown> =
+      step && typeof step === 'object' ? (step as Record<string, unknown>) : {};
+    const idValue = obj['id'];
+    const typeValue = obj['type'];
+    const id = typeof idValue === 'string' && idValue ? idValue : `n_${i}`;
+    const type = typeof typeValue === 'string' && typeValue ? typeValue : RR_STEP_TYPES.SCRIPT;
+    arr.push({ id, type, config: mapStepToNodeConfig(step) });
   });
   return arr;
+}
+
+/**
+ * Convert linear steps array to DAG format (nodes + edges).
+ * Generates sequential edges connecting nodes in order.
+ */
+export function stepsToDAG(steps: ReadonlyArray<unknown>): { nodes: RRNode[]; edges: RREdge[] } {
+  const nodes = stepsToNodes(steps);
+  const edges: RREdge[] = [];
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const from = nodes[i].id;
+    const to = nodes[i + 1].id;
+    // Include index in edge id to avoid collision when step ids repeat
+    edges.push({
+      id: `e_${i}_${from}_${to}`,
+      from,
+      to,
+      label: EDGE_LABELS.DEFAULT,
+    });
+  }
+  return { nodes, edges };
 }

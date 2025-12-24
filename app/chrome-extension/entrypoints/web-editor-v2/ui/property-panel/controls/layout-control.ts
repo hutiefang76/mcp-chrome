@@ -734,9 +734,22 @@ export function createLayoutControl(options: LayoutControlOptions): DesignContro
   wireNumberStepping(disposer, columnGapContainer.input, { mode: 'css-length' });
 
   // ---------------------------------------------------------------------------
+  // Grid + Gap combined row (two columns when display=grid)
+  // ---------------------------------------------------------------------------
+  const gridGapRow = document.createElement('div');
+  gridGapRow.className = 'we-grid-gap-row';
+  gridGapRow.hidden = true;
+
+  // Adjust gridRow and gapRow to fit in two-column layout
+  gridRow.classList.add('we-grid-gap-col');
+  gapRow.classList.add('we-grid-gap-col');
+
+  gridGapRow.append(gridRow, gapRow);
+
+  // ---------------------------------------------------------------------------
   // Assemble DOM
   // ---------------------------------------------------------------------------
-  root.append(displayRow, directionRow, wrapRow, alignmentRow, gridRow, gapRow);
+  root.append(displayRow, directionRow, wrapRow, alignmentRow, gridGapRow);
   container.append(root);
   disposer.add(() => root.remove());
 
@@ -934,6 +947,9 @@ export function createLayoutControl(options: LayoutControlOptions): DesignContro
     directionRow.hidden = !isFlex;
     wrapRow.hidden = !isFlex;
     alignmentRow.hidden = !isFlex;
+
+    // Grid + Gap row visibility
+    gridGapRow.hidden = !isFlexOrGrid;
     gridRow.hidden = !isGrid;
     gapRow.hidden = !isFlexOrGrid;
   }

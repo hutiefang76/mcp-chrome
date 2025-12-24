@@ -39,6 +39,7 @@ import {
 } from './execution-tracker';
 import { createHmrConsistencyVerifier, type HmrConsistencyVerifier } from './hmr-consistency';
 import { createPerfMonitor, type PerfMonitor } from './perf-monitor';
+import { createDesignTokensService, type DesignTokensService } from './design-tokens';
 
 // =============================================================================
 // Types
@@ -68,6 +69,8 @@ interface EditorInternalState {
   propertyPanel: PropertyPanel | null;
   /** Runtime props bridge (Phase 7) */
   propsBridge: PropsBridge | null;
+  /** Design tokens service (Phase 5.3) */
+  tokensService: DesignTokensService | null;
   /** Performance monitor (Phase 5.3) - disabled by default */
   perfMonitor: PerfMonitor | null;
   /** Cleanup function for perf monitor hotkey */
@@ -115,6 +118,7 @@ export function createWebEditorV2(): WebEditorV2Api {
     breadcrumbs: null,
     propertyPanel: null,
     propsBridge: null,
+    tokensService: null,
     perfMonitor: null,
     perfHotkeyCleanup: null,
     hoveredElement: null,
@@ -854,11 +858,15 @@ export function createWebEditorV2(): WebEditorV2Api {
       // Initialize Props Bridge (Phase 7)
       state.propsBridge = createPropsBridge({});
 
+      // Initialize Design Tokens Service (Phase 5.3)
+      state.tokensService = createDesignTokensService();
+
       // Initialize Property Panel (Phase 3)
       state.propertyPanel = createPropertyPanel({
         container: elements.uiRoot,
         transactionManager: state.transactionManager,
         propsBridge: state.propsBridge,
+        tokensService: state.tokensService,
         initialPosition: state.propertyPanelPosition,
         onPositionChange: (position) => {
           state.propertyPanelPosition = position;
@@ -917,6 +925,8 @@ export function createWebEditorV2(): WebEditorV2Api {
       state.uiResizeCleanup = null;
       state.propertyPanel?.dispose();
       state.propertyPanel = null;
+      state.tokensService?.dispose();
+      state.tokensService = null;
       state.propsBridge?.dispose();
       state.propsBridge = null;
       state.breadcrumbs?.dispose();
@@ -977,6 +987,10 @@ export function createWebEditorV2(): WebEditorV2Api {
       // Cleanup Property Panel (Phase 3)
       state.propertyPanel?.dispose();
       state.propertyPanel = null;
+
+      // Cleanup Design Tokens Service (Phase 5.3)
+      state.tokensService?.dispose();
+      state.tokensService = null;
 
       // Cleanup Props Bridge (Phase 7) - best effort cleanup
       void state.propsBridge?.cleanup();

@@ -262,7 +262,7 @@ export function createIconButtonGroup<T extends string = string>(
     btn.className = 'we-icon-button-group__btn';
     btn.setAttribute('role', 'radio');
     btn.setAttribute('aria-label', item.ariaLabel);
-    if (item.title) btn.title = item.title;
+    if (item.title) btn.dataset.tooltip = item.title;
     btn.dataset.value = item.value;
     btn.append(cloneForDom(item.icon));
 

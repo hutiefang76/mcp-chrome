@@ -457,29 +457,183 @@
       this.ui.resetTimeline();
     }
 
-    stop() {
+    /**
+     * Stop recording and flush all pending data.
+     * This is the reliable stop that ensures no data is lost.
+     * Waits for background to acknowledge receipt of all data before returning.
+     * @returns {Promise<{ack: boolean, steps: number, variables: number}>}
+     */
+    async stop() {
+      if (!this.isRecording) {
+        return { ack: true, steps: 0, variables: 0 };
+      }
+
       this.isRecording = false;
-      this._detach();
-      this.ui.remove();
+
+      // Step 1: Finalize any pending input (draft mode)
+      this._finalizePendingInput();
+
+      // Step 2: Finalize any pending scroll
+      this._finalizePendingScroll();
+
+      // Step 3: Clear timers BEFORE flush (prevent race conditions)
       if (this.batchTimer) clearTimeout(this.batchTimer);
       this.batchTimer = null;
       if (this.scrollTimer) clearTimeout(this.scrollTimer);
       this.scrollTimer = null;
       if (this.hoverRAF) cancelAnimationFrame(this.hoverRAF);
       this.hoverRAF = 0;
+
+      // Step 4: Flush any remaining batched steps and WAIT for ack
+      const stepsCount = this.batch.length;
+      let stepsAck = true;
+      if (stepsCount > 0) {
+        stepsAck = await this._flush();
+      }
+
+      // Step 5: Send all collected variables and WAIT for ack
+      const variablesCount = this.sessionBuffer.variables?.length || 0;
+      let variablesAck = true;
+      if (variablesCount > 0) {
+        variablesAck = await this._sendVariables();
+      }
+
+      // Step 6: Detach listeners and clean up UI
+      this._detach();
+      this.ui.remove();
+
+      // Step 7: Reset state
       this.lastFill = { step: null, ts: 0 };
       const ret = this.sessionBuffer;
       this.sessionBuffer.steps = [];
-      return ret;
+
+      // Return acknowledgment with stats
+      // ack is true only if all sends were acknowledged
+      return {
+        ack: stepsAck && variablesAck,
+        steps: stepsCount,
+        variables: variablesCount,
+      };
     }
 
+    /**
+     * Finalize any pending input that hasn't been flushed yet.
+     * This ensures the last input value is captured before stop.
+     */
+    _finalizePendingInput() {
+      // If there's a recent fill step that might still be debouncing, force it through
+      if (this.lastFill.step && this.lastFill.ts > 0) {
+        const timeSinceLastFill = Date.now() - this.lastFill.ts;
+        // If the fill was very recent, it might not have been pushed yet
+        if (timeSinceLastFill < CONFIG.INPUT_DEBOUNCE_MS) {
+          // The step should already be in batch, just ensure it's the latest value
+          // by checking if the element still exists and getting current value
+          try {
+            const el = this.lastFill.step._recordingRef;
+            if (el && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+              this.lastFill.step.value = el.value || '';
+            }
+          } catch (e) {
+            // Element may no longer exist, that's OK
+          }
+        }
+        this.lastFill = { step: null, ts: 0 };
+      }
+    }
+
+    /**
+     * Finalize any pending scroll that hasn't been committed yet.
+     * Converts the pending scroll data into a proper scroll step.
+     */
+    _finalizePendingScroll() {
+      if (!this._scrollPending) return;
+
+      const pending = this._scrollPending;
+      this._scrollPending = null;
+
+      const { isDoc, target, top, left } = pending;
+
+      // Try merge with last step (same logic as _onScroll timer callback)
+      const steps = this.sessionBuffer.steps;
+      const last = steps.length ? steps[steps.length - 1] : null;
+      if (last && last.type === 'scroll') {
+        const sameDoc = isDoc && !last.target && last.mode === 'offset';
+        const sameEl =
+          !isDoc &&
+          last.target &&
+          last.target.selector &&
+          target &&
+          last.target.selector === target.selector &&
+          last.mode === 'container';
+        if (sameDoc || sameEl) {
+          last.offset = { y: top, x: left };
+          this.sessionBuffer.meta.updatedAt = new Date().toISOString();
+          return;
+        }
+      }
+
+      // Create new scroll step
+      if (isDoc) {
+        this._pushStep({
+          type: 'scroll',
+          mode: 'offset',
+          offset: { y: top, x: left },
+          screenshotOnFail: false,
+        });
+      } else {
+        this._pushStep({
+          type: 'scroll',
+          mode: 'container',
+          target: target,
+          offset: { y: top, x: left },
+          screenshotOnFail: false,
+        });
+      }
+    }
+
+    /**
+     * Send all collected variables to background.
+     * @returns {Promise<boolean>} - Resolves when background acknowledges receipt
+     */
+    async _sendVariables() {
+      if (!this.sessionBuffer.variables || this.sessionBuffer.variables.length === 0) {
+        return true;
+      }
+      return this._send({ kind: 'variables', variables: this.sessionBuffer.variables });
+    }
+
+    /**
+     * Pause recording. Flushes pending data before pausing.
+     */
     pause() {
+      if (!this.isRecording || this.isPaused) return;
+
+      // Finalize pending data before pausing
+      this._finalizePendingInput();
+      this._finalizePendingScroll();
+
+      // Flush batched steps
+      if (this.batch.length > 0) {
+        this._flush();
+      }
+
+      // Clear timers
+      if (this.batchTimer) clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+      if (this.scrollTimer) clearTimeout(this.scrollTimer);
+      this.scrollTimer = null;
+
       this.isPaused = true;
       this._detach();
       this.ui.updateStatus();
     }
 
+    /**
+     * Resume recording after pause.
+     */
     resume() {
+      if (!this.isPaused) return;
+
       this.isRecording = true;
       this.isPaused = false;
       this._attach();
@@ -528,6 +682,15 @@
       this.scrollTimer = null;
       if (this.hoverRAF) cancelAnimationFrame(this.hoverRAF);
       this.hoverRAF = 0;
+      // Flush pending click if any before detaching
+      if (this._pendingClickTimer) {
+        clearTimeout(this._pendingClickTimer);
+        if (this._pendingClick) {
+          this._pushStep(this._pendingClick);
+        }
+      }
+      this._pendingClickTimer = null;
+      this._pendingClick = null;
     }
 
     _updateHoverListener() {
@@ -591,19 +754,43 @@
       }, CONFIG.BATCH_SEND_MS);
     }
 
-    _flush() {
-      if (!this.batch.length) return;
+    /**
+     * Flush batched steps to background.
+     * @returns {Promise<boolean>} - Resolves when background acknowledges receipt
+     */
+    async _flush() {
+      if (!this.batch.length) return true;
       const steps = this.batch.map((s) => {
         // sanitize internal fields before sending to background
         const { _recordingRef, ...rest } = s || {};
         return rest;
       });
       this.batch.length = 0;
-      this._send({ kind: 'steps', steps });
+      return this._send({ kind: 'steps', steps });
     }
 
+    /**
+     * Send payload to background and wait for acknowledgment.
+     * @param {Object} payload - The payload to send
+     * @returns {Promise<boolean>} - Resolves true if background acknowledged, false otherwise
+     */
     _send(payload) {
-      chrome.runtime.sendMessage({ type: 'rr_recorder_event', payload });
+      return new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage({ type: 'rr_recorder_event', payload }, (response) => {
+            // Check for runtime error (e.g., no receiver)
+            if (chrome.runtime.lastError) {
+              console.warn('Recorder: send failed', chrome.runtime.lastError.message);
+              resolve(false);
+              return;
+            }
+            resolve(response && response.ok);
+          });
+        } catch (e) {
+          console.warn('Recorder: send exception', e);
+          resolve(false);
+        }
+      });
     }
 
     _addVariable(key, sensitive, defVal) {
@@ -613,6 +800,11 @@
     }
 
     // Handlers
+    // Pending click state for dblclick detection
+    _pendingClick = null;
+    _pendingClickTimer = null;
+    _DBLCLICK_THRESHOLD_MS = 300;
+
     _onClick(e) {
       if (!this.isRecording || this.isPaused) return;
       const el = e.target instanceof Element ? e.target : null;
@@ -641,29 +833,71 @@
           }
         }
       } catch {}
+
       const target = SelectorEngine.buildTarget(el);
       try {
         const gref = SelectorEngine._ensureGlobalRef && SelectorEngine._ensureGlobalRef(el);
         if (gref) target.ref = gref;
       } catch {}
-      this._pushStep({
-        type: e.detail >= 2 ? 'dblclick' : 'click',
+
+      // Double-click detection: if e.detail >= 2 means this is the second click of a dblclick
+      if (e.detail >= 2) {
+        // Cancel pending single click and record dblclick instead
+        if (this._pendingClickTimer) {
+          clearTimeout(this._pendingClickTimer);
+          this._pendingClickTimer = null;
+        }
+        this._pendingClick = null;
+        this._pushStep({
+          type: 'dblclick',
+          target,
+          screenshotOnFail: true,
+        });
+        return;
+      }
+
+      // Single click: wait briefly to see if it becomes a dblclick
+      // Cancel any previous pending click first
+      if (this._pendingClickTimer) {
+        clearTimeout(this._pendingClickTimer);
+        // Flush previous pending click before starting new one
+        if (this._pendingClick) {
+          this._pushStep(this._pendingClick);
+        }
+      }
+
+      this._pendingClick = {
+        type: 'click',
         target,
         screenshotOnFail: true,
-      });
+      };
+
+      this._pendingClickTimer = setTimeout(() => {
+        if (this._pendingClick) {
+          this._pushStep(this._pendingClick);
+          this._pendingClick = null;
+        }
+        this._pendingClickTimer = null;
+      }, this._DBLCLICK_THRESHOLD_MS);
     }
 
-    // Per-element input handler (attached on focusin for native inputs/textarea)
+    // Per-element input handler (attached on focusin for native inputs/textarea/contenteditable)
     _onInput(e) {
       if (!this.isRecording || this.isPaused) return;
       // Avoid mid-composition spam (IME): handle final committed value
       try {
         if (e && typeof e.isComposing === 'boolean' && e.isComposing) return;
       } catch {}
+      const target = e.target;
+      // Support input/textarea and contenteditable elements
       const el =
-        e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
-          ? e.target
-          : null;
+        target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+          ? target
+          : target &&
+              target.nodeType === 1 &&
+              /** @type {HTMLElement} */ (target).isContentEditable === true
+            ? /** @type {HTMLElement} */ (target)
+            : null;
       if (!el) return;
       this._handleInputForElement(el);
     }
@@ -685,6 +919,11 @@
           el = n;
           break;
         }
+        // Also check for contenteditable
+        if (n && n.nodeType === 1 && /** @type {HTMLElement} */ (n).isContentEditable === true) {
+          el = /** @type {HTMLElement} */ (n);
+          break;
+        }
       }
       // As a fallback, walk down activeElement chain (deep active element via shadow roots)
       if (!el) {
@@ -694,6 +933,15 @@
           while (ae && guard++ < 10) {
             if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) {
               el = ae;
+              break;
+            }
+            // Check contenteditable in shadow DOM traversal
+            if (
+              ae &&
+              ae.nodeType === 1 &&
+              /** @type {HTMLElement} */ (ae).isContentEditable === true
+            ) {
+              el = /** @type {HTMLElement} */ (ae);
               break;
             }
             const anyAe = ae;
@@ -710,6 +958,7 @@
     }
 
     // Shared input processing logic (debounce/merge/sensitivity)
+    // Uses Draft/Upsert model: updates are re-enqueued to ensure background gets final value
     _handleInputForElement(el) {
       try {
         const t = (el.getAttribute && el.getAttribute('type')) || '';
@@ -718,12 +967,22 @@
       } catch {}
       const elRef = this._getElRef(el);
       const target = SelectorEngine.buildTarget(el);
+
+      // Check if element is contenteditable
+      const isContentEditable =
+        el.nodeType === 1 && /** @type {HTMLElement} */ (el).isContentEditable === true;
+
       const isSensitive =
         this.hideInputValues ||
-        CONFIG.SENSITIVE_INPUT_TYPES.has(
-          ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase(),
-        );
-      let value = el.value || '';
+        (!isContentEditable &&
+          CONFIG.SENSITIVE_INPUT_TYPES.has(
+            ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase(),
+          ));
+
+      // Get value: use .value for input/textarea, .innerText for contenteditable
+      let value = isContentEditable
+        ? /** @type {HTMLElement} */ (el).innerText || ''
+        : el.value || '';
       if (isSensitive) {
         const varKey = el.name ? el.name : `var_${Math.random().toString(36).slice(2, 6)}`;
         this._addVariable(varKey, true, '');
@@ -742,15 +1001,43 @@
       );
       const within = nowTs - this.lastFill.ts <= CONFIG.INPUT_DEBOUNCE_MS;
       if ((sameRef || sameSelector) && within) {
+        // Update existing step's value
         this.lastFill.step.value = value;
         this.sessionBuffer.meta.updatedAt = new Date().toISOString();
         this.lastFill.ts = nowTs;
+        // Re-enqueue the updated step for upsert (ensures background gets final value)
+        this._enqueueForUpsert(this.lastFill.step);
         return;
       }
       const newStep = { type: 'fill', target, value, screenshotOnFail: true };
       newStep._recordingRef = elRef;
       this._pushStep(newStep);
       this.lastFill = { step: newStep, ts: nowTs };
+    }
+
+    /**
+     * Enqueue a step for upsert - if step with same id exists in batch, update it.
+     * This ensures the background receives the final value for fill steps.
+     */
+    _enqueueForUpsert(step) {
+      if (!step || !step.id) return;
+      // Check if step already in batch
+      const existingIdx = this.batch.findIndex((s) => s.id === step.id);
+      if (existingIdx >= 0) {
+        // Update existing entry in batch
+        this.batch[existingIdx] = step;
+      } else {
+        // Add to batch (step was already flushed, so we need to send update)
+        this.batch.push(step);
+      }
+      // Reset batch timer to send update
+      if (this.batchTimer) {
+        clearTimeout(this.batchTimer);
+      }
+      this.batchTimer = setTimeout(() => {
+        this.batchTimer = null;
+        this._flush();
+      }, CONFIG.BATCH_SEND_MS);
     }
 
     _onChange(e) {
@@ -766,6 +1053,8 @@
           this.lastFill.step.value = val;
           this.sessionBuffer.meta.updatedAt = new Date().toISOString();
           this.lastFill.ts = nowTs;
+          // Re-enqueue for upsert
+          this._enqueueForUpsert(this.lastFill.step);
           return;
         }
         const target = SelectorEngine.buildTarget(el);
@@ -1024,10 +1313,9 @@
       try {
         const d = ev && ev.data;
         if (!d || d.type !== FRAME_EVENT || !d.payload) return;
-        const { step, href } = d.payload || {};
-        if (!step || typeof step !== 'object') return;
 
-        // Identify iframe element by event.source
+        // Security: validate message source is from a known iframe in our page
+        // ev.source must match contentWindow of an iframe element we control
         let frameEl = null;
         try {
           const frames = document.querySelectorAll('iframe,frame');
@@ -1040,8 +1328,41 @@
           }
         } catch {}
 
+        // Reject messages not from a recognized iframe in our document
+        if (!frameEl) {
+          // Message source is not from a child iframe we control - ignore
+          return;
+        }
+
+        // Additional origin check: only accept from same origin or about:blank iframes
+        // (cross-origin iframes legitimately send from their origin)
+        try {
+          const selfOrigin = window.location.origin;
+          const msgOrigin = ev.origin;
+          // Allow same-origin, null (for sandboxed iframes), or if iframe src is same-origin
+          const frameSrc = frameEl.getAttribute('src') || '';
+          let iframeSameOrigin = false;
+          try {
+            if (!frameSrc || frameSrc === 'about:blank') {
+              iframeSameOrigin = true;
+            } else {
+              const frameUrl = new URL(frameSrc, selfOrigin);
+              iframeSameOrigin = frameUrl.origin === selfOrigin;
+            }
+          } catch {
+            // Invalid URL - assume cross-origin
+          }
+          // If iframe is same-origin, message origin should match
+          if (iframeSameOrigin && msgOrigin !== selfOrigin && msgOrigin !== 'null') {
+            return; // Origin mismatch for same-origin iframe - suspicious
+          }
+        } catch {}
+
+        const { step, href } = d.payload || {};
+        if (!step || typeof step !== 'object') return;
+
         // Stateless: compose composite selector and push single step
-        if (frameEl && step && step.target) {
+        if (step.target) {
           const frameTarget = SelectorEngine.buildTarget(frameEl);
           const frameSel = frameTarget?.selector || '';
           const inner = String(step.target.selector || '').trim();
@@ -1052,8 +1373,8 @@
               step.target.candidates.unshift({ type: 'css', value: composite });
             }
           }
-          this._pushStep(step);
         }
+        this._pushStep(step);
       } catch {}
     }
   }
@@ -1102,11 +1423,31 @@
           return true;
         }
         if (cmd === 'stop') {
-          const flow = rec.stop();
-          sendResponse({ success: true, flow });
-          return true;
+          // Stop is now async - flush all data and wait for ack before responding
+          rec
+            .stop()
+            .then((result) => {
+              sendResponse({ success: true, ack: result.ack, stats: result });
+            })
+            .catch((err) => {
+              sendResponse({ success: false, ack: false, error: String(err) });
+            });
+          return true; // Keep channel open for async response
         }
         sendResponse({ success: false, error: 'Unknown command' });
+        return true;
+      }
+      // Handle direct stop message with ack (sent by recorder-manager)
+      if (request.action === 'stop' && request.requireAck) {
+        const rec = getRecorder();
+        rec
+          .stop()
+          .then((result) => {
+            sendResponse({ ack: result.ack, stats: result });
+          })
+          .catch(() => {
+            sendResponse({ ack: false });
+          });
         return true;
       }
       if (request.action === 'rr_recorder_ping') {

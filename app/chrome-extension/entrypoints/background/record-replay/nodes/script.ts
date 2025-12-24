@@ -12,8 +12,9 @@ export const scriptNode: NodeRuntime<StepScript> = {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = tabs?.[0]?.id;
     if (typeof tabId !== 'number') throw new Error('Active tab not found');
+    const frameIds = typeof ctx.frameId === 'number' ? [ctx.frameId] : undefined;
     const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, frameIds } as any,
       func: (userCode: string) => {
         try {
           return (0, eval)(userCode);

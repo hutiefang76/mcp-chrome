@@ -7,6 +7,7 @@
 
 import type { TransactionManager } from '../../core/transaction-manager';
 import type { PropsBridge } from '../../core/props-bridge';
+import type { DesignTokensService } from '../../core/design-tokens';
 import type { FloatingPosition } from '../floating-drag';
 
 // =============================================================================
@@ -57,6 +58,9 @@ export interface PropertyPanelOptions {
 
   /** Initial tab to display (default: 'design') */
   defaultTab?: PropertyPanelTab;
+
+  /** Optional: Design tokens service for TokenPill/TokenPicker integration (Phase 5.3) */
+  tokensService?: DesignTokensService;
 }
 
 // =============================================================================

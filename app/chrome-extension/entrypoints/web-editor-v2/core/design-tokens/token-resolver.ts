@@ -110,7 +110,8 @@ export function createTokenResolver(options: TokenResolverOptions = {}): TokenRe
 
   function parseCssVar(value: string): CssVarReference | null {
     const raw = String(value ?? '').trim();
-    if (!raw.startsWith('var(')) return null;
+    // Case-insensitive var() prefix check
+    if (!raw.toLowerCase().startsWith('var(')) return null;
 
     // Find matching closing parenthesis
     let depth = 0;
@@ -129,7 +130,9 @@ export function createTokenResolver(options: TokenResolverOptions = {}): TokenRe
       }
     }
 
-    if (endIndex < 0) return null;
+    // Strict mode: closing paren must be the last character (standalone var() expression)
+    // This rejects values like "var(--x))" or "var(--x) foo"
+    if (endIndex < 0 || endIndex !== raw.length - 1) return null;
 
     // Extract content between var( and )
     const inner = raw.slice(4, endIndex).trim();

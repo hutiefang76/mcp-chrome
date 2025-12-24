@@ -303,7 +303,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
   dragHandle.type = 'button';
   dragHandle.className = 'we-drag-handle';
   dragHandle.setAttribute('aria-label', 'Drag property panel');
-  dragHandle.title = 'Drag';
+  dragHandle.dataset.tooltip = 'Drag';
   dragHandle.append(createGripIcon());
 
   // Header left: title and target label (column layout)
@@ -365,7 +365,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
   minimizeBtn.type = 'button';
   minimizeBtn.className = 'we-icon-btn';
   minimizeBtn.setAttribute('aria-label', 'Minimize property panel');
-  minimizeBtn.title = 'Minimize';
+  minimizeBtn.dataset.tooltip = 'Minimize';
   minimizeBtn.append(createSlidersIcon());
   headerRight.append(minimizeBtn);
 
@@ -378,7 +378,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
     closeBtn.type = 'button';
     closeBtn.className = 'we-icon-btn';
     closeBtn.setAttribute('aria-label', 'Close Web Editor');
-    closeBtn.title = 'Close';
+    closeBtn.dataset.tooltip = 'Close';
     closeBtn.append(createCloseIcon());
 
     disposer.listen(closeBtn, 'click', (event) => {
@@ -558,6 +558,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       const typographyControl = createTypographyControl({
         container: typographyGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(typographyControl);
     }
@@ -568,6 +569,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       const appearanceControl = createAppearanceControl({
         container: appearanceGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(appearanceControl);
     }
@@ -578,6 +580,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       const effectsControl = createEffectsControl({
         container: effectsGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(effectsControl);
     }
@@ -588,6 +591,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       const gradientControl = createGradientControl({
         container: gradientGroup.body,
         transactionManager: options.transactionManager,
+        tokensService: options.tokensService,
       });
       controls.push(gradientControl);
     }
@@ -675,7 +679,7 @@ export function createPropertyPanel(options: PropertyPanelOptions): PropertyPane
       'aria-label',
       minimized ? 'Expand property panel' : 'Minimize property panel',
     );
-    minimizeBtn.title = minimized ? 'Expand' : 'Minimize';
+    minimizeBtn.dataset.tooltip = minimized ? 'Expand' : 'Minimize';
 
     // Keep minimized layout stable while preserving stored floating position.
     // When restoring, re-apply stored position (and clamp with current size).

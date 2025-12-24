@@ -16,7 +16,7 @@ export const assertNode: NodeRuntime<StepAssert> = {
     return ok ? { ok } : { ok, errors: ['缺少断言条件'] };
   },
   run: async (ctx: ExecCtx, step: StepAssert) => {
-    const s = expandTemplatesDeep(step as StepAssert, {}) as any;
+    const s = expandTemplatesDeep(step as StepAssert, ctx.vars) as any;
     const failStrategy = (s as any).failStrategy || 'stop';
     const fail = (msg: string) => {
       if (failStrategy === 'warn') {
@@ -39,10 +39,14 @@ export const assertNode: NodeRuntime<StepAssert> = {
       const tabId = firstTab && typeof firstTab.id === 'number' ? firstTab.id : undefined;
       if (!tabId) return fail('Active tab not found');
       await handleCallTool({ name: TOOL_NAMES.BROWSER.READ_PAGE, args: {} });
-      const ensured: any = (await chrome.tabs.sendMessage(tabId, {
-        action: 'ensureRefForSelector',
-        selector,
-      } as any)) as any;
+      const ensured: any = (await chrome.tabs.sendMessage(
+        tabId,
+        {
+          action: 'ensureRefForSelector',
+          selector,
+        } as any,
+        { frameId: ctx.frameId } as any,
+      )) as any;
       if (!ensured || !ensured.success) return fail('assert selector not found');
       if ('visible' in s.assert) {
         const rect = ensured && ensured.center ? ensured.center : null;

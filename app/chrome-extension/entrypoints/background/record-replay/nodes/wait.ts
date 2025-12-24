@@ -9,7 +9,7 @@ export const waitNode: NodeRuntime<StepWait> = {
     return ok ? { ok } : { ok, errors: ['缺少等待条件'] };
   },
   run: async (ctx: ExecCtx, step: StepWait) => {
-    const s = expandTemplatesDeep(step as StepWait, {});
+    const s = expandTemplatesDeep(step as StepWait, ctx.vars);
     const cond = (s as StepWait).condition as
       | { selector: string; visible?: boolean }
       | { text: string; appear?: boolean }
@@ -20,8 +20,9 @@ export const waitNode: NodeRuntime<StepWait> = {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tabId = tabs?.[0]?.id;
       if (typeof tabId !== 'number') throw new Error('Active tab not found');
+      const frameIds = typeof ctx.frameId === 'number' ? [ctx.frameId] : undefined;
       await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, frameIds },
         files: ['inject-scripts/wait-helper.js'],
         world: 'ISOLATED',
       } as any);
@@ -49,17 +50,22 @@ export const waitNode: NodeRuntime<StepWait> = {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tabId = tabs?.[0]?.id;
       if (typeof tabId !== 'number') throw new Error('Active tab not found');
+      const frameIds = typeof ctx.frameId === 'number' ? [ctx.frameId] : undefined;
       await chrome.scripting.executeScript({
-        target: { tabId },
+        target: { tabId, frameIds },
         files: ['inject-scripts/wait-helper.js'],
         world: 'ISOLATED',
       } as any);
-      const resp: any = (await chrome.tabs.sendMessage(tabId, {
-        action: 'waitForSelector',
-        selector: (cond as any).selector,
-        visible: (cond as any).visible !== false,
-        timeout: Math.max(0, Math.min((s as any).timeoutMs || 10000, 120000)),
-      } as any)) as any;
+      const resp: any = (await chrome.tabs.sendMessage(
+        tabId,
+        {
+          action: 'waitForSelector',
+          selector: (cond as any).selector,
+          visible: (cond as any).visible !== false,
+          timeout: Math.max(0, Math.min((s as any).timeoutMs || 10000, 120000)),
+        } as any,
+        { frameId: ctx.frameId } as any,
+      )) as any;
       if (!resp || resp.success !== true) throw new Error('wait selector failed');
     }
     return {} as ExecResult;

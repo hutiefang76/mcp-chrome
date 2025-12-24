@@ -5,8 +5,16 @@ import { TOOL_MESSAGE_TYPES } from '@/common/message-types';
 import { ERROR_MESSAGES } from '@/common/constants';
 import { listMarkersForUrl } from '@/entrypoints/background/element-marker/element-marker-storage';
 
+interface ReadPageStats {
+  processed: number;
+  included: number;
+  durationMs: number;
+}
+
 interface ReadPageParams {
   filter?: 'interactive'; // when omitted, return all visible elements
+  depth?: number; // maximum DOM depth to traverse (0 = root only)
+  refId?: string; // focus on subtree rooted at this refId
   tabId?: number; // target existing tab id
   windowId?: number; // when no tabId, pick active tab from this window
 }
@@ -16,7 +24,26 @@ class ReadPageTool extends BaseBrowserToolExecutor {
 
   // Execute read page
   async execute(args: ReadPageParams): Promise<ToolResult> {
-    const { filter } = args || {};
+    const { filter, depth, refId } = args || {};
+
+    // Validate refId parameter
+    const focusRefId = typeof refId === 'string' ? refId.trim() : '';
+    if (refId !== undefined && !focusRefId) {
+      return createErrorResponse(
+        `${ERROR_MESSAGES.INVALID_PARAMETERS}: refId must be a non-empty string`,
+      );
+    }
+
+    // Validate depth parameter
+    const requestedDepth = depth === undefined ? undefined : Number(depth);
+    if (requestedDepth !== undefined && (!Number.isInteger(requestedDepth) || requestedDepth < 0)) {
+      return createErrorResponse(
+        `${ERROR_MESSAGES.INVALID_PARAMETERS}: depth must be a non-negative integer`,
+      );
+    }
+
+    // Track if user explicitly controlled the output (skip sparse heuristics)
+    const userControlled = requestedDepth !== undefined || !!focusRefId;
 
     try {
       // Tip text returned to callers to guide next action
@@ -46,43 +73,101 @@ class ReadPageTool extends BaseBrowserToolExecutor {
       const resp = await this.sendMessageToTab(tab.id, {
         action: TOOL_MESSAGE_TYPES.GENERATE_ACCESSIBILITY_TREE,
         filter: filter || null,
+        depth: requestedDepth,
+        refId: focusRefId || undefined,
       });
 
       // Evaluate tree result and decide whether to fallback
       const treeOk = resp && resp.success === true;
       const pageContent: string =
         resp && typeof resp.pageContent === 'string' ? resp.pageContent : '';
+
+      // Extract stats from response
+      const stats: ReadPageStats | null =
+        treeOk && resp?.stats
+          ? {
+              processed: resp.stats.processed ?? 0,
+              included: resp.stats.included ?? 0,
+              durationMs: resp.stats.durationMs ?? 0,
+            }
+          : null;
+
       const lines = pageContent
         ? pageContent.split('\n').filter((l: string) => l.trim().length > 0).length
         : 0;
       const refCount = Array.isArray(resp?.refMap) ? resp.refMap.length : 0;
-      const isSparse = lines < 10 && refCount < 3; // heuristic threshold for sparse trees
 
+      // Skip sparse heuristics when user explicitly controls output
+      const isSparse = !userControlled && lines < 10 && refCount < 3;
+
+      // Build user-marked elements for inclusion
+      const markedElements = userMarkers.map((m) => ({
+        name: m.name,
+        selector: m.selector,
+        selectorType: m.selectorType || 'css',
+        urlMatch: { type: m.matchType, origin: m.origin, path: m.path },
+        source: 'marker',
+        priority: 'highest',
+      }));
+
+      // Helper to convert elements array to pageContent format
+      const formatElementsAsPageContent = (elements: any[]): string => {
+        const out: string[] = [];
+        for (const e of elements || []) {
+          const type = typeof e?.type === 'string' && e.type ? e.type : 'element';
+          const rawText = typeof e?.text === 'string' ? e.text.trim() : '';
+          const text =
+            rawText.length > 0
+              ? ` "${rawText.replace(/\s+/g, ' ').slice(0, 100).replace(/"/g, '\\"')}"`
+              : '';
+          const selector =
+            typeof e?.selector === 'string' && e.selector ? ` selector="${e.selector}"` : '';
+          const coords =
+            e?.coordinates && Number.isFinite(e.coordinates.x) && Number.isFinite(e.coordinates.y)
+              ? ` (x=${Math.round(e.coordinates.x)},y=${Math.round(e.coordinates.y)})`
+              : '';
+          out.push(`- ${type}${text}${selector}${coords}`);
+          if (out.length >= 150) break;
+        }
+        return out.join('\n');
+      };
+
+      // Unified base payload structure - consistent keys for stable contract
+      const basePayload: Record<string, any> = {
+        success: true,
+        filter: filter || 'all',
+        pageContent,
+        tips: standardTips,
+        viewport: treeOk ? resp.viewport : { width: null, height: null, dpr: null },
+        stats: stats || { processed: 0, included: 0, durationMs: 0 },
+        refMapCount: refCount,
+        sparse: treeOk ? isSparse : false,
+        depth: requestedDepth ?? null,
+        focus: focusRefId ? { refId: focusRefId, found: treeOk } : null,
+        markedElements,
+        elements: [],
+        count: 0,
+        fallbackUsed: false,
+        fallbackSource: null,
+        reason: null,
+      };
+
+      // Normal path: return tree
       if (treeOk && !isSparse) {
-        // Normal path: return tree
-        const resultPayload = {
-          success: true,
-          filter: filter || 'all',
-          pageContent: resp.pageContent,
-          tips: standardTips,
-          viewport: resp.viewport,
-          refMapCount: refCount,
-          sparse: false,
-          // Include user-marked elements to guide callers
-          markedElements: userMarkers.map((m) => ({
-            name: m.name,
-            selector: m.selector,
-            selectorType: m.selectorType || 'css',
-            urlMatch: { type: m.matchType, origin: m.origin, path: m.path },
-            source: 'marker',
-            priority: 'highest',
-          })),
-        };
-
         return {
-          content: [{ type: 'text', text: JSON.stringify(resultPayload) }],
+          content: [{ type: 'text', text: JSON.stringify(basePayload) }],
           isError: false,
         };
+      }
+
+      // When refId is explicitly provided, do not fallback (refs are frame-local and may expire)
+      if (focusRefId) {
+        return createErrorResponse(resp?.error || `refId "${focusRefId}" not found or expired`);
+      }
+
+      // When user explicitly controls depth, do not override with fallback heuristics
+      if (requestedDepth !== undefined) {
+        return createErrorResponse(resp?.error || 'Failed to generate accessibility tree');
       }
 
       // Fallback path: try get_interactive_elements once
@@ -96,7 +181,7 @@ class ReadPageTool extends BaseBrowserToolExecutor {
         if (fallback && fallback.success && Array.isArray(fallback.elements)) {
           const limited = fallback.elements.slice(0, 150);
           // Merge user markers at the front, de-duplicated by selector
-          const markerElements = userMarkers.map((m) => ({
+          const markerEls = userMarkers.map((m) => ({
             type: 'marker',
             selector: m.selector,
             text: m.name,
@@ -105,21 +190,20 @@ class ReadPageTool extends BaseBrowserToolExecutor {
             source: 'marker',
             priority: 'highest',
           }));
-          const seen = new Set(markerElements.map((e) => e.selector));
-          const merged = [...markerElements, ...limited.filter((e: any) => !seen.has(e.selector))];
-          const fallbackPayload = {
-            success: true,
-            fallbackUsed: true,
-            fallbackSource: 'get_interactive_elements',
-            reason: treeOk ? 'sparse_tree' : resp?.error || 'tree_failed',
-            treeStats: { lines, refCount },
-            elements: merged,
-            count: fallback.elements.length,
-            tips: standardTips,
-          };
+          const seen = new Set(markerEls.map((e) => e.selector));
+          const merged = [...markerEls, ...limited.filter((e: any) => !seen.has(e.selector))];
+
+          basePayload.fallbackUsed = true;
+          basePayload.fallbackSource = 'get_interactive_elements';
+          basePayload.reason = treeOk ? 'sparse_tree' : resp?.error || 'tree_failed';
+          basePayload.elements = merged;
+          basePayload.count = fallback.elements.length;
+          if (!basePayload.pageContent) {
+            basePayload.pageContent = formatElementsAsPageContent(merged);
+          }
 
           return {
-            content: [{ type: 'text', text: JSON.stringify(fallbackPayload) }],
+            content: [{ type: 'text', text: JSON.stringify(basePayload) }],
             isError: false,
           };
         }
